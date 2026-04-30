@@ -23,7 +23,7 @@ Provider = Literal["openai", "anthropic"]
 
 # Default models per provider — override with MODEL_NAME env var.
 _DEFAULT_MODELS: dict[Provider, str] = {
-    "openai": "gpt-gpt-5.4-nano",
+    "openai": "gpt-5.4-nano",
     "anthropic": "claude-haiku-4-5-20251001",
 }
 

@@ -27,13 +27,17 @@ Usage
 Import the pre-compiled ``graph`` singleton for use in your application:
 
     from agent import graph
-    result = graph.invoke({"messages": [("human", "What is 2**10?")]})
+    result = graph.invoke(
+        {"messages": [("human", "What is 2**10?")]},
+        config={"configurable": {"thread_id": "1"}},
+    )
 
 Or call ``build_graph()`` to get a fresh compiled graph (useful in tests).
 """
 
 from __future__ import annotations
 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -71,7 +75,7 @@ def build_graph() -> CompiledStateGraph:
     # After tools execute, always loop back to the agent.
     builder.add_edge("tools", "agent")
 
-    return builder.compile()
+    return builder.compile(checkpointer=InMemorySaver())
 
 
 # Module-level singleton — import this for normal use.

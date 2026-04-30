@@ -104,7 +104,7 @@ class TestSettings:
         monkeypatch.setenv("MODEL_NAME", "")
         s = get_settings()
         assert s.llm_provider == "openai"
-        assert s.resolved_model == "gpt-4o"
+        assert s.resolved_model == "gpt-5.4-nano"
 
     def test_anthropic_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "anthropic")
@@ -160,7 +160,10 @@ class TestGraphStructure:
             # Clear the cache so the patch takes effect.
             _get_llm_with_tools.cache_clear()
             g = build_graph()
-            result = g.invoke({"messages": [HumanMessage(content="What is 6 * 7?")]})
+            result = g.invoke(
+                {"messages": [HumanMessage(content="What is 6 * 7?")]},
+                config={"configurable": {"thread_id": "test"}},
+            )
 
         messages = result["messages"]
         # The last message should be the AI response.
