@@ -27,6 +27,7 @@ import os
 from datetime import datetime, timezone
 
 from langchain_core.tools import BaseTool, tool
+from agent.tools_filesystem import *
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +122,7 @@ def _make_web_search_tool() -> BaseTool | None:
 
 def get_tools() -> list[BaseTool]:
     """Return the list of tools available to the agent at runtime."""
-    tools: list[BaseTool] = [calculate, get_current_datetime]
+    tools: list[BaseTool] = [calculate, get_current_datetime, read_file, write_file, list_directory]
 
     web_search = _make_web_search_tool()
     if web_search:

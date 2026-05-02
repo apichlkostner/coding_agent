@@ -23,6 +23,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from agent.config import Settings, get_settings
 from agent.state import AgentState
 from agent.tools import calculate, get_current_datetime, get_tools
+from agent.tools_filesystem import read_file, write_file, list_directory
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +79,29 @@ class TestGetCurrentDatetimeTool:
         result = get_current_datetime.invoke({})
         assert "+00:00" in result
 
+class TestReadFileTool:
+    def test_returns_file_content(self) -> None:
+        result = read_file.invoke("tests/testfile.md")
+        assert result == "Hello World 0815"
+
+    def test_path_outside_project(self) -> None:
+        result = read_file.invoke("../testfile.md")
+        assert result.startswith("Error:")
+
+class TestWriteReadFileTool:
+    def test_roundtrip(self) -> None:
+        test_string: str = "Hello world 1234"
+        file_path: str = "tests/readwrite.md"
+        write_file.invoke({"path": file_path, "content": test_string})
+        result = read_file.invoke(file_path)
+        assert result == test_string
+
+class TestListDirectoryTool:
+    def test_list_directory(self) -> None:
+        dir_path: str = "tests/testfolder"
+        result = list_directory.invoke({"path": dir_path})
+        
+        assert result == "[('file1', 'file'), ('folder1', 'dir'), ('file2', 'file')]"
 
 class TestGetTools:
     def test_always_includes_builtins(self) -> None:
