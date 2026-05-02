@@ -36,8 +36,7 @@ When the developer is stuck, prefer:
 - Tests live in `tests/test_agent.py` and can be run with `uv run pytest`
 - Main entry point is `src/agent/__main__.py`
 - See `README.md` for full setup and usage instructions
-- Current LangGraph docs are in docu/langgraph/*.md (see docu/index.md for a file-level index)
-- Official LangGraph docu in the internet is on address https://docs.langchain.com/oss/python/langgraph/overview
+- Current LangGraph docs are in docs/langgraph/*.md (see docs/index.md for a file-level index)
 
 ## LangGraph reference
 
@@ -136,7 +135,7 @@ graph.invoke(None, fork_config)
 
 ### Common workflow patterns
 
-See `docu/langgraph/workflow_and_agents.md` for full examples.
+See `docs/langgraph/workflow_and_agents.md` for full examples.
 
 - **Prompt chaining**: sequential LLM calls, each processes output of previous
 - **Parallelization**: multiple edges from START, or `Send` API for dynamic workers

@@ -45,3 +45,8 @@ Thumbs.db
 # LangGraph / LangSmith checkpoints
 *.sqlite
 langgraph.json
+
+# local copies of docs
+docs/index.md
+docs/opencode
+docs/langgraph
