@@ -29,13 +29,21 @@ def main() -> None:
             print("Goodbye.")
             sys.exit(0)
 
-        result = graph.invoke(
+        for step in graph.stream(
             {"messages": [HumanMessage(content=user_input)]},
+            stream_mode="updates",
             config=_CONFIG,
-        )
+        ):
+            node_name, node_output = next(iter(step.items()))
+            last_msg = node_output["messages"][-1]
 
-        ai_message = result["messages"][-1]
-        print(f"\nAgent: {ai_message.content}\n")
+            if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+                calls = ", ".join(tc["name"] for tc in last_msg.tool_calls)
+                print(f"[{node_name}] → tool calls: {calls}")
+            elif hasattr(last_msg, "name") and last_msg.name != None:  # ToolMessage
+                print(f"[{node_name}] ← tool result: {last_msg.content[:180]}")
+            else:
+                print(f"[{node_name}] {last_msg.content}")
 
 
 if __name__ == "__main__":
