@@ -23,7 +23,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from agent.config import Settings, get_settings
 from agent.state import AgentState
 from agent.tools import calculate, get_current_datetime, get_tools
-from agent.tools_filesystem import read_file, write_file, list_directory
+from agent.tools_filesystem import read_file, write_file, list_directory, grep
 
 
 # ---------------------------------------------------------------------------
@@ -96,12 +96,23 @@ class TestWriteReadFileTool:
         result = read_file.invoke(file_path)
         assert result == test_string
 
+class TestGrepTool:
+    def test_grep(self) -> None:
+        result = grep.invoke({"pattern": "def", "directory": "tests/testfolder", "file_pattern": ["*.py"], "case_sensitive": False, "skip_dirs": {".venv"}})
+        
+        assert result == ['tests/testfolder/folder1/test.py:2:def test():']
+
+    def test_grep_multi_file_extensions(self) -> None:
+        result = grep.invoke({"pattern": "def", "directory": "tests/testfolder", "file_pattern": ["*.py", "*.cpp"], "case_sensitive": False, "skip_dirs": {".venv"}})
+        
+        assert result == ['tests/testfolder/folder1/test.py:2:def test():', 'tests/testfolder/folder1/test.cpp:2:#define MAX 1000']
+
 class TestListDirectoryTool:
     def test_list_directory(self) -> None:
         dir_path: str = "tests/testfolder"
         result = list_directory.invoke({"path": dir_path})
         
-        assert result == "[('file1', 'file'), ('folder1', 'dir'), ('file2', 'file')]"
+        assert result == [('.venv', 'dir'), ('file1', 'file'), ('folder1', 'dir'), ('file2', 'file')]
 
 class TestGetTools:
     def test_always_includes_builtins(self) -> None:
