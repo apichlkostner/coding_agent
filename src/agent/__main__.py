@@ -38,7 +38,7 @@ def main() -> None:
             last_msg = node_output["messages"][-1]
 
             if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-                calls = ", ".join(tc["name"] for tc in last_msg.tool_calls)
+                calls = ", ".join(tc["name"]+"("+str(tc["args"])+")" for tc in last_msg.tool_calls)
                 print(f"[{node_name}] → tool calls: {calls}")
             elif hasattr(last_msg, "name") and last_msg.name != None:  # ToolMessage
                 print(f"[{node_name}] ← tool result: {last_msg.content[:180]}")

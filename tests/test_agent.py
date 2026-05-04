@@ -24,6 +24,7 @@ from agent.config import Settings, get_settings
 from agent.state import AgentState
 from agent.tools import calculate, get_current_datetime, get_tools
 from agent.tools_filesystem import read_file, write_file, list_directory, grep, replace_in_file, create_directory
+from agent.tools_cmd import bash
 
 
 # ---------------------------------------------------------------------------
@@ -285,3 +286,11 @@ class TestGraphStructure:
 
         call_args = mock_llm.invoke.call_args[0][0]
         assert isinstance(call_args[0], SystemMessage)
+
+
+class TestCBashTool:
+    def test_existing_parent_folder(self) -> None:
+        command = "uname && ls"
+        result = bash.invoke({"command": command})
+        
+        assert result.startswith("exit_code:")

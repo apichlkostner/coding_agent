@@ -60,7 +60,7 @@ def read_file(path: str, offset: int = 0, lines: int = 0) -> str:
         else:
             return "Error: Path is not inside the project folder"
     except Exception as err:
-        return "Error: " + str(err)
+        return f"Error: {err}"
 
 @tool
 def write_file(path: str | Path, content: str) -> str:
@@ -81,7 +81,7 @@ def write_file(path: str | Path, content: str) -> str:
         else:
             return "Error: Path " + path.as_posix() + " is not inside the project folder"
     except Exception as err:
-        return "Error: " + str(err)
+        return f"Error: {err}"
 
 @tool
 def list_directory(path: str | Path) -> list:
@@ -98,7 +98,7 @@ def list_directory(path: str | Path) -> list:
             return entries
         return "Error: Path is not inside the project folder"
     except Exception as err:
-        return "Error: " + str(err)
+        return f"Error: {err}"
     
 @tool
 def create_directory(path: str | Path) -> str:
@@ -115,7 +115,7 @@ def create_directory(path: str | Path) -> str:
             return "Success"
         return "Error: Path is not inside the project folder"
     except Exception as err:
-        return "Error: " + str(err)
+        return f"Error: {err}"
 
 @tool
 def replace_in_file(path: str | Path, old_string: str, new_string: str, replace_all: bool = False) -> str:
@@ -135,19 +135,19 @@ def replace_in_file(path: str | Path, old_string: str, new_string: str, replace_
                 count = content.count(old_string)
                 
                 if count == 0:
-                    return "Error: " + old_string + " not found in file " + path.as_posix()
+                    return f"Error: {old_string} not found in file {path.as_posix()}"
                 elif count > 1 and not replace_all:
-                    return "Error: " + old_string + " found " + str(count) + " times in file " + path.as_posix()
+                    return f"Error: {old_string} found {count} times in file {path.as_posix()}"
                 
                 new_content = content.replace(old_string, new_string)
                 
                 with open(path, 'w') as f:
                     f.write(new_content)
 
-                return "Replaced " + str(count) + " times"
+                return f"Replaced {count} times"
         return "Error: Path is not inside the project folder"
     except Exception as err:
-        return "Error: " + str(err)
+        return f"Error: {err}"
 
 @tool
 def grep(pattern: str, directory: str | Path, file_pattern: list = ["*"], case_sensitive: bool = True, skip_dirs: set = None) -> list:
@@ -182,10 +182,10 @@ def grep(pattern: str, directory: str | Path, file_pattern: list = ["*"], case_s
                             for line_num, line in enumerate(f, 1):
                                 if regex.search(line):
                                     matches.append(f"{filepath}:{line_num}:{line.rstrip()}")
-                    except Exception as e:
-                        matches.append(f"Error: " + str(e))
+                    except Exception as err:
+                        matches.append(f"Error: {err}")
 
             return matches
         return ["Error: Directory is not inside the project folder"]
     except Exception as err:
-        return ["Error: " + str(err)]
+        return [f"Error: {err}"]
