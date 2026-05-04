@@ -32,19 +32,34 @@ def _entry_type(p: Path) -> str:
 # ---------------------------------------------------------------------------
 
 @tool
-def read_file(path: str) -> str:
+def read_file(path: str, offset: int = 0, lines: int = 0) -> str:
     """Reads a file from the given path and returns the content of the file
+
+    Args:
+        path: path of the file
+        offset: line offset
+        lines_max: maximum lines to read, 0 equals all
 
     Example
     -------
     read_file("docs/index.md") -> "# Index of docs folder"
+    read_file("docs/index.md", 1, 1) -> "# Index of docs folder"
     """
     # TODO: size limits, offset and length parameter
     try:
         if (_is_subpath(path, strict=True)):
             with open(path, "r", encoding="utf-8") as f:
-                return f.read()
-        return "Error: Path is not inside the project folder"
+                count = 0
+                result = ""
+                for line in f:
+                    if count >= offset:
+                        result += line
+                    count += 1
+                    if (lines > 0 and count >= offset + lines):
+                        break
+                return result
+        else:
+            return "Error: Path is not inside the project folder"
     except Exception as err:
         return "Error: " + str(err)
 
@@ -82,7 +97,39 @@ def list_directory(path: str | Path) -> list:
         return "Error: Path is not inside the project folder"
     except Exception as err:
         return "Error: " + str(err)
-    
+
+@tool
+def replace_in_file(path: str | Path, old_string: str, new_string: str) -> bool|str:
+    """Replaces a string in a file with another string.
+    Returns True if the old_string is unique in the file or if replace_all is true.
+    Returns False if the old_string is not unique
+
+    Example
+    -------
+    replace_in_file("docs/test.txt", "old text", "new text") -> True
+    """
+    try:
+        if (_is_subpath(path, strict=True)):
+            path = Path(path)
+            with open(path, 'r') as f:
+                content = f.read()                
+                count = content.count(old_string)
+                
+                if count == 0:
+                    return "Error: " + old_string + " not found in file " + path
+                elif count > 1:
+                    return "Error: " + old_string + " found " + count + " times in file " + path
+                
+                new_content = content.replace(old_string, new_string)
+                
+                with open(path, 'w') as f:
+                    f.write(new_content)
+
+                return True
+        return "Error: Path is not inside the project folder"
+    except Exception as err:
+        return "Error: " + str(err)
+
 @tool
 def grep(pattern: str, directory: str | Path, file_pattern: list = ["*"], case_sensitive: bool = True, skip_dirs: set = None) -> list:
     """Greps for given pattern

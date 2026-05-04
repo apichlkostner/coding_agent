@@ -23,7 +23,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from agent.config import Settings, get_settings
 from agent.state import AgentState
 from agent.tools import calculate, get_current_datetime, get_tools
-from agent.tools_filesystem import read_file, write_file, list_directory, grep
+from agent.tools_filesystem import read_file, write_file, list_directory, grep, replace_in_file
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +94,45 @@ class TestWriteReadFileTool:
         file_path: str = "tests/readwrite.md"
         write_file.invoke({"path": file_path, "content": test_string})
         result = read_file.invoke(file_path)
+        assert result == test_string
+
+    def test_roundtrip_with_offset(self) -> None:
+        test_string: str = """All that glitters is not gold.
+To be, or not to be, that is the question.
+A rose by any other name would smell as sweet.
+        """
+        file_path: str = "tests/readwrite.md"
+        write_file.invoke({"path": file_path, "content": test_string})
+        result = read_file.invoke({"path": file_path, "offset": 1, "lines": 1})
+        assert result == "To be, or not to be, that is the question.\n"
+
+class TestReplaceInFileTool:
+    def test_roundtrip(self) -> None:
+        test_string: str = "Hello world 1234"
+        file_path: str = "tests/readwrite.md"
+        write_file.invoke({"path": file_path, "content": test_string})
+
+        result_replace = replace_in_file.invoke({"path": file_path, "old_string": "world", "new_string": "sun"})
+        assert result_replace == True
+
+        result = read_file.invoke(file_path)
+        assert result == "Hello sun 1234"
+
+    def test_roundtrip_multiple(self) -> None:
+        test_string: str = """All that glitters is not gold.
+To be, or not to be, that is the question.
+A rose by any other name would smell as sweet.
+        """
+        file_path: str = "tests/readwrite.md"
+        write_file.invoke({"path": file_path, "content": test_string})
+
+        result_replace = replace_in_file.invoke({"path": file_path, "old_string": "be", "new_string": "see"})
+        assert result_replace.startswith("Error:")
+
+        result_replace = replace_in_file.invoke({"path": file_path, "old_string": "123456", "new_string": "654321"})
+        assert result_replace.startswith("Error:")
+
+        result = read_file.invoke({"path": file_path})
         assert result == test_string
 
 class TestGrepTool:
