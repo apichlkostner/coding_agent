@@ -23,7 +23,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from agent.config import Settings, get_settings
 from agent.state import AgentState
 from agent.tools import calculate, get_current_datetime, get_tools
-from agent.tools_filesystem import read_file, write_file, list_directory, grep, replace_in_file
+from agent.tools_filesystem import read_file, write_file, list_directory, grep, replace_in_file, create_directory
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +143,21 @@ A rose by any other name would smell as sweet.
 To see, or not to see, that is the question.
 A rose by any other name would smell as sweet.
         """
+
+class TestCreateDirectoryTool:
+    def test_existing_parent_folder(self) -> None:
+        new_folder = "tests/testfolder42"
+        result = create_directory.invoke({"path": new_folder})
+        assert result == "Success"
+        assert os.path.isdir(new_folder)
+        os.rmdir(new_folder)
+
+    def test_recursive_creation(self) -> None:
+        new_folder = "notexist/testfolder42"
+        result = create_directory.invoke({"path": new_folder})
+        assert result == "Success"
+        assert os.path.isdir(new_folder)
+        os.removedirs(new_folder)
 
 class TestGrepTool:
     def test_grep(self) -> None:

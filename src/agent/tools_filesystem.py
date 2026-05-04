@@ -64,7 +64,9 @@ def read_file(path: str, offset: int = 0, lines: int = 0) -> str:
 
 @tool
 def write_file(path: str | Path, content: str) -> str:
-    """Writes content to file in path
+    """Writes content to file in path.
+    Creates a new file if it doesn't exist.
+    If the parent folder doesn't exist, call create_folder before.
 
     Example
     -------
@@ -72,7 +74,7 @@ def write_file(path: str | Path, content: str) -> str:
     """
     # TODO: create parent folder if needed
     try:
-        if (_is_subpath(path)):
+        if (_is_subpath(path, strict=False)):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
                 return "Success"
@@ -94,6 +96,23 @@ def list_directory(path: str | Path) -> list:
             directory = Path(path)
             entries = list((e.name, _entry_type(e)) for e in directory.iterdir()) 
             return entries
+        return "Error: Path is not inside the project folder"
+    except Exception as err:
+        return "Error: " + str(err)
+    
+@tool
+def create_directory(path: str | Path) -> str:
+    """Creates a directory, including parents
+
+    Example
+    -------
+    create_folder("docs/internal") -> "Success
+    """
+    try:
+        if (_is_subpath(path, strict=False)):
+            path = Path(path)
+            path.mkdir(parents=True, exist_ok=True)
+            return "Success"
         return "Error: Path is not inside the project folder"
     except Exception as err:
         return "Error: " + str(err)
