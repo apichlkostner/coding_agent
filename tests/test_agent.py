@@ -113,7 +113,7 @@ class TestReplaceInFileTool:
         write_file.invoke({"path": file_path, "content": test_string})
 
         result_replace = replace_in_file.invoke({"path": file_path, "old_string": "world", "new_string": "sun"})
-        assert result_replace == True
+        assert result_replace == "Replaced 1 times"
 
         result = read_file.invoke(file_path)
         assert result == "Hello sun 1234"
@@ -134,6 +134,15 @@ A rose by any other name would smell as sweet.
 
         result = read_file.invoke({"path": file_path})
         assert result == test_string
+
+        result_replace = replace_in_file.invoke({"path": file_path, "old_string": "be", "new_string": "see", "replace_all": True})
+        assert result_replace == "Replaced 2 times"
+
+        result = read_file.invoke({"path": file_path})
+        assert result == """All that glitters is not gold.
+To see, or not to see, that is the question.
+A rose by any other name would smell as sweet.
+        """
 
 class TestGrepTool:
     def test_grep(self) -> None:

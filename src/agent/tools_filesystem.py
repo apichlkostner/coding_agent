@@ -37,15 +37,14 @@ def read_file(path: str, offset: int = 0, lines: int = 0) -> str:
 
     Args:
         path: path of the file
-        offset: line offset
-        lines_max: maximum lines to read, 0 equals all
+        offset: line offset starting with 0
+        lines: nuber of lines to read, 0 equals all
 
     Example
     -------
     read_file("docs/index.md") -> "# Index of docs folder"
-    read_file("docs/index.md", 1, 1) -> "# Index of docs folder"
+    read_file("docs/index.md", 1, 1) -> "## Introduction"
     """
-    # TODO: size limits, offset and length parameter
     try:
         if (_is_subpath(path, strict=True)):
             with open(path, "r", encoding="utf-8") as f:
@@ -77,7 +76,8 @@ def write_file(path: str | Path, content: str) -> str:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
                 return "Success"
-            return "Error: Path is not inside the project folder"
+        else:
+            return "Error: Path " + path.as_posix() + " is not inside the project folder"
     except Exception as err:
         return "Error: " + str(err)
 
@@ -99,33 +99,33 @@ def list_directory(path: str | Path) -> list:
         return "Error: " + str(err)
 
 @tool
-def replace_in_file(path: str | Path, old_string: str, new_string: str) -> bool|str:
+def replace_in_file(path: str | Path, old_string: str, new_string: str, replace_all: bool = False) -> str:
     """Replaces a string in a file with another string.
-    Returns True if the old_string is unique in the file or if replace_all is true.
-    Returns False if the old_string is not unique
+    Returns "Replaced {number of replaces} times" on success
+    Returns an Error string if the old_string is not unique and replace_all is not True
 
     Example
     -------
-    replace_in_file("docs/test.txt", "old text", "new text") -> True
+    replace_in_file("docs/test.txt", "old text", "new text") -> "Success"
     """
     try:
         if (_is_subpath(path, strict=True)):
             path = Path(path)
-            with open(path, 'r') as f:
+            with open(path, 'r', encoding='utf-8') as f:
                 content = f.read()                
                 count = content.count(old_string)
                 
                 if count == 0:
-                    return "Error: " + old_string + " not found in file " + path
-                elif count > 1:
-                    return "Error: " + old_string + " found " + count + " times in file " + path
+                    return "Error: " + old_string + " not found in file " + path.as_posix()
+                elif count > 1 and not replace_all:
+                    return "Error: " + old_string + " found " + str(count) + " times in file " + path.as_posix()
                 
                 new_content = content.replace(old_string, new_string)
                 
                 with open(path, 'w') as f:
                     f.write(new_content)
 
-                return True
+                return "Replaced " + str(count) + " times"
         return "Error: Path is not inside the project folder"
     except Exception as err:
         return "Error: " + str(err)
