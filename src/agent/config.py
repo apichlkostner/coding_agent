@@ -35,6 +35,7 @@ class Settings:
     llm_provider: Provider = field(default="openai")
     model_name: str = field(default="")
     temperature: float = field(default=0.0)
+    discord_token: str = field(default="")
 
     @property
     def resolved_model(self) -> str:
@@ -50,10 +51,12 @@ def get_settings() -> Settings:
             f"Unsupported LLM_PROVIDER '{raw_provider}'. "
             "Choose 'openai' or 'anthropic'."
         )
+    discord_token = os.getenv("DISCORD_BOT_TOKEN", "")
     return Settings(
-        llm_provider=raw_provider,  # type: ignore[arg-type]
-        model_name=os.getenv("MODEL_NAME", ""),
-        temperature=float(os.getenv("TEMPERATURE", "0")),
+        llm_provider = raw_provider,  # type: ignore[arg-type]
+        model_name = os.getenv("MODEL_NAME", ""),
+        temperature = float(os.getenv("TEMPERATURE", "0")),
+        discord_token = discord_token
     )
 
 
@@ -80,6 +83,6 @@ def get_llm(settings: Settings | None = None) -> BaseChatModel:
     from langchain_anthropic import ChatAnthropic  # noqa: PLC0415
 
     return ChatAnthropic(
-        model=cfg.resolved_model,
-        temperature=cfg.temperature,
+        model = cfg.resolved_model,
+        temperature = cfg.temperature,
     )
