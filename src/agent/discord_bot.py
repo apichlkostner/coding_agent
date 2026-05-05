@@ -1,8 +1,19 @@
 # discord_bot.py
 import discord
+import logging
 from langchain_core.messages import HumanMessage
 
 from agent.graph import graph
+
+logging.basicConfig(
+    filename="discord_bot.log",
+    encoding="utf-8",
+    filemode="a",
+    level=logging.INFO,
+    format="{asctime} - {levelname} - {message}",
+    style="{",
+    datefmt="%Y-%m-%d %H:%M",
+)
 
 intents = discord.Intents.default()
 intents.message_content = True 
@@ -36,6 +47,7 @@ class DiscordBot(discord.Client):
                             tc["name"] + "(" + str(tc["args"])[:50] + ")"
                             for tc in last_msg.tool_calls
                         )
+                        logging.info(f"TOOLS: {calls}")
                         buffer += f"\n**Tools:** {calls}"
 
                     # Handle tool results
@@ -43,6 +55,7 @@ class DiscordBot(discord.Client):
                         result_preview = last_msg.content[:200]
                         if len(last_msg.content) > 200:
                             result_preview += "..."
+                        logging.info(f"RESULT: {result_preview}")
                         buffer += f"\n**Result:** {result_preview}"
 
                     # Handle agent response
@@ -58,12 +71,13 @@ class DiscordBot(discord.Client):
             await channel.send(f"Error: {str(e)[:200]}")
 
     async def on_ready(self):
-        print(f"Logged in as {self.user} (ID: {self.user.id})")
+        logging.info(f"Logged in as {self.user} (ID: {self.user.id})")
 
 
     async def on_message(self, message):
+        logging.info(f"{message.author}: {message.content}")
+        
         if message.author.bot:
             return
-
-        print(f"{message.author}: {message.content}")
+        
         await self.stream_agent_response(message.channel, message.author.id, message.channel.id, message.content)

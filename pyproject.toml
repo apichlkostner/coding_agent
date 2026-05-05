@@ -11,6 +11,8 @@ dependencies = [
     "langchain-anthropic>=0.3",
     "python-dotenv>=1.0",
     "typing-extensions>=4.12",
+    "discord-py>=2.7.1",
+    "prompt-toolkit>=3.0.52",
 ]
 
 [project.scripts]

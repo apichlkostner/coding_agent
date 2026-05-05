@@ -1,19 +1,25 @@
 import asyncio
 import sys
-from langchain_core.messages import HumanMessage
+
 from agent.graph import graph
+from langchain_core.messages import HumanMessage
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import InMemoryHistory
 
 # Each session gets its own thread so the checkpointer maintains history.
 _CONFIG = {"configurable": {"thread_id": "cli-session"}}
 
 class TerminalBot:
+    def __init__(self):
+        self.session = PromptSession(history=InMemoryHistory())
+    
     async def start(self):
         """Run the agent in an interactive REPL loop."""
         print("LangGraph Coding Agent  (type 'quit' or Ctrl-C to exit)\n")
 
         while True:
             try:
-                user_input = (await asyncio.to_thread(input, "You: ")).strip()
+                user_input = (await self.session.prompt_async("You: ")).strip()
             except (KeyboardInterrupt, EOFError):
                 print("\nGoodbye.")
                 sys.exit(0)
