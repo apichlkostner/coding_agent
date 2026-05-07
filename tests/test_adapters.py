@@ -6,7 +6,6 @@ All tests run without a real LLM, Discord token, or interactive terminal.
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,7 +15,7 @@ import pytest
 from agent.adapters.discord_adapter import DiscordAdapter, _DiscordClient
 from agent.adapters.heartbeat_adapter import HeartbeatAdapter
 from agent.adapters.terminal_adapter import TerminalAdapter
-from agent.config import HeartbeatSettings, Settings, get_settings
+from agent.config import HeartbeatSettings, get_settings
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
 

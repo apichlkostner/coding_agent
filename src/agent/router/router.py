@@ -20,13 +20,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import defaultdict
+from collections import OrderedDict
 
 from agent.router.agent_service import AgentService
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import InboundMessage, OutboundMessage
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of per-thread locks kept in memory at once.  Least-recently-used
+# entries are evicted when the limit is exceeded, provided the lock is not held.
+_MAX_THREAD_LOCKS = 1_000
 
 
 class MessageRouter:
@@ -43,8 +47,10 @@ class MessageRouter:
         self._agent_service = agent_service
         self._adapters: dict[str, BaseAdapter] = {}
         # One asyncio.Lock per thread_id prevents concurrent writes to the
-        # same LangGraph checkpointer thread.
-        self._thread_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        # same LangGraph checkpointer thread.  The OrderedDict is used as a
+        # bounded LRU cache: the oldest *unlocked* entry is evicted whenever
+        # the dict exceeds _MAX_THREAD_LOCKS entries.
+        self._thread_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
 
     # ------------------------------------------------------------------
     # Registration
@@ -94,9 +100,31 @@ class MessageRouter:
         """
         return asyncio.create_task(self._process(message))
 
+    def _get_or_create_lock(self, thread_id: str) -> asyncio.Lock:
+        """Return the lock for *thread_id*, creating and caching it if needed.
+
+        When the cache reaches *_MAX_THREAD_LOCKS* entries the least-recently-used
+        entry that is not currently held is evicted to prevent unbounded growth.
+        """
+        if thread_id in self._thread_locks:
+            self._thread_locks.move_to_end(thread_id)
+            return self._thread_locks[thread_id]
+
+        lock = asyncio.Lock()
+        self._thread_locks[thread_id] = lock
+
+        if len(self._thread_locks) > _MAX_THREAD_LOCKS:
+            # Evict the oldest entry that is not currently held.
+            for tid, candidate in self._thread_locks.items():
+                if not candidate.locked():
+                    del self._thread_locks[tid]
+                    break
+
+        return lock
+
     async def _process(self, message: InboundMessage) -> None:
         """Run the agent for *message*, serialised per thread_id."""
-        lock = self._thread_locks[message.thread_id]
+        lock = self._get_or_create_lock(message.thread_id)
         async with lock:
             adapter = self._adapters.get(message.adapter_id)
             if adapter is None:

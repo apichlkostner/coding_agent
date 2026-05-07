@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
@@ -363,13 +363,6 @@ class TestMessageRouterDispatch:
 
     async def test_dispatch_concurrent_different_threads(self) -> None:
         """Messages on different threads run concurrently (no cross-lock blocking)."""
-        started: list[str] = []
-
-        async def astream_for(thread_id: str) -> AsyncGenerator[Any, None]:
-            started.append(thread_id)
-            await asyncio.sleep(0)
-            yield {"agent": {"messages": [AIMessage(content="ok")]}}
-
         # We patch _process to verify both can start before either finishes.
         graph = _make_graph({"agent": {"messages": [AIMessage(content="ok")]}})
         service = AgentService(graph)

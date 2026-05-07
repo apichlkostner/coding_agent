@@ -112,7 +112,7 @@ class HeartbeatAdapter(BaseAdapter):
                         adapter_id=self._settings.output_adapter_id,
                         reply_channel_id=self._settings.output_channel_id,
                         content=message.content,
-                        metadata=message.metadata,
+                        metadata=dict(message.metadata),
                     )
                 )
             else:

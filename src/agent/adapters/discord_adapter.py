@@ -93,10 +93,19 @@ class DiscordAdapter(BaseAdapter):
         if not message.content:
             return
 
-        channel = self._client.get_channel(int(message.reply_channel_id))
+        try:
+            channel_id = int(message.reply_channel_id)
+        except ValueError:
+            logger.error(
+                "DiscordAdapter: reply_channel_id %r is not a valid integer; dropping message.",
+                message.reply_channel_id,
+            )
+            return
+
+        channel = self._client.get_channel(channel_id)
         if channel is None:
             try:
-                channel = await self._client.fetch_channel(int(message.reply_channel_id))
+                channel = await self._client.fetch_channel(channel_id)
             except Exception as exc:  # noqa: BLE001
                 logger.error(
                     "DiscordAdapter: could not get channel %s: %s",

@@ -105,4 +105,4 @@ class AgentService:
 
         except Exception as exc:  # noqa: BLE001
             logger.error("AgentService error for thread '%s': %s", message.thread_id, exc)
-            yield _make(f"Error: {exc!s:.200}", "error")
+            yield _make(f"{exc!s:.200}", "error")

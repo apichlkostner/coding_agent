@@ -214,9 +214,9 @@ class TestSettings:
 
     def test_explicit_model_name_overrides_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("MODEL_NAME", "gpt-4o-mini")
+        monkeypatch.setenv("MODEL_NAME", "gpt-5.4-mini")
         s = get_settings()
-        assert s.resolved_model == "gpt-4o-mini"
+        assert s.resolved_model == "gpt-5.4-mini"
 
     def test_invalid_provider_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "cohere")

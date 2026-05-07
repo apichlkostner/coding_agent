@@ -5,7 +5,7 @@ A LangGraph ReAct (Reasoning + Acting) AI agent specialised for coding tasks. Th
 ## Features
 
 - **ReAct loop** built with LangGraph `StateGraph`
-- **Multi-provider** support: OpenAI (default `gpt-4o-mini`) and Anthropic (default `claude-haiku-4-5`)
+- **Multi-provider** support: OpenAI (default `gpt-5.4-nano`) and Anthropic (default `claude-haiku-4-5`)
 - **Built-in tools**: safe arithmetic evaluator, current UTC datetime
 - **Filesystem tools**: read, write, list, create directory, replace-in-file, grep
 - **Shell tool**: run arbitrary bash commands (see [Security](#security))
@@ -44,7 +44,7 @@ All settings are loaded from environment variables (`.env` is read automatically
 | `LLM_PROVIDER` | `openai` | `"openai"` or `"anthropic"` |
 | `OPENAI_API_KEY` | — | Required for OpenAI |
 | `ANTHROPIC_API_KEY` | — | Required for Anthropic |
-| `MODEL_NAME` | _(provider default)_ | Override model (e.g. `gpt-4o-mini`) |
+| `MODEL_NAME` | _(provider default)_ | Override model (e.g. `gpt-5.4-mini`) |
 | `TEMPERATURE` | `0` | LLM sampling temperature |
 | `ENABLED_ADAPTERS` | `terminal,discord,heartbeat` | Comma-separated adapters to start; unset = all three; `""` = none |
 | `DISCORD_BOT_TOKEN` | — | Discord bot token; adapter skipped if absent |

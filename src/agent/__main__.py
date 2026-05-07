@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import logging.handlers
 from typing import TYPE_CHECKING
 
 from agent.adapters import DiscordAdapter, HeartbeatAdapter, TerminalAdapter

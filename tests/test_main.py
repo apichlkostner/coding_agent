@@ -297,28 +297,28 @@ class TestIntegration:
             _get_llm_with_tools.cache_clear()
             graph = build_graph()
 
-        service = AgentService(graph)
-        router = MessageRouter(service)
-        adapter = _CollectorAdapter()
-        router.register(adapter)
+            service = AgentService(graph)
+            router = MessageRouter(service)
+            adapter = _CollectorAdapter()
+            router.register(adapter)
 
-        t1 = await router.dispatch(
-            InboundMessage(
-                adapter_id="collector",
-                thread_id="thread-A",
-                content="hello from A",
-                reply_channel_id="out",
+            t1 = await router.dispatch(
+                InboundMessage(
+                    adapter_id="collector",
+                    thread_id="thread-A",
+                    content="hello from A",
+                    reply_channel_id="out",
+                )
             )
-        )
-        t2 = await router.dispatch(
-            InboundMessage(
-                adapter_id="collector",
-                thread_id="thread-B",
-                content="hello from B",
-                reply_channel_id="out",
+            t2 = await router.dispatch(
+                InboundMessage(
+                    adapter_id="collector",
+                    thread_id="thread-B",
+                    content="hello from B",
+                    reply_channel_id="out",
+                )
             )
-        )
-        await asyncio.gather(t1, t2)
+            await asyncio.gather(t1, t2)
 
         replies = [m for m in adapter.received if m.msg_type == "response"]
         assert len(replies) == 2
