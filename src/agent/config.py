@@ -39,6 +39,9 @@ class HeartbeatSettings:
     """Path to the Markdown file whose content is sent to the agent each tick."""
 
 
+_ALL_ADAPTERS: frozenset[str] = frozenset({"terminal", "discord", "heartbeat"})
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable runtime configuration."""
@@ -48,6 +51,10 @@ class Settings:
     temperature: float = field(default=0.0)
     discord_token: str = field(default="")
     heartbeat: HeartbeatSettings = field(default_factory=HeartbeatSettings)
+    enabled_adapters: frozenset[str] = field(
+        default_factory=lambda: frozenset({"terminal", "discord", "heartbeat"})
+    )
+    """Set of adapter IDs that should be started.  Controlled by ``ENABLED_ADAPTERS``."""
 
     @property
     def resolved_model(self) -> str:
@@ -68,12 +75,19 @@ def get_settings() -> Settings:
         interval_seconds=int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "600")),
         prompt_file=os.getenv("HEARTBEAT_PROMPT_FILE", "HEARTBEAT.md"),
     )
+    raw_enabled = os.environ.get("ENABLED_ADAPTERS")
+    enabled_adapters: frozenset[str] = (
+        frozenset({"terminal", "discord", "heartbeat"})
+        if raw_enabled is None
+        else frozenset(a.strip() for a in raw_enabled.split(",") if a.strip())
+    )
     return Settings(
         llm_provider=raw_provider,  # type: ignore[arg-type]
         model_name=os.getenv("MODEL_NAME", ""),
         temperature=float(os.getenv("TEMPERATURE", "0")),
         discord_token=discord_token,
         heartbeat=heartbeat,
+        enabled_adapters=enabled_adapters,
     )
 
 

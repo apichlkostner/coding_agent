@@ -242,27 +242,29 @@ The old `discord_bot.py`, `terminal_bot.py`, `heartbeat_bot.py` are **deleted** 
 - **`MagicMock.__aenter__` receives `self`** — assigning an `async def f()` directly as `mock.__aenter__ = f` causes a call-with-self failure. Fixed by using `async def f(*_)` to absorb the implicit `self` argument.
 - **`HeartbeatSettings` as a frozen dataclass field** — `field(default_factory=HeartbeatSettings)` is the correct way to embed a mutable-default nested dataclass inside a `frozen=True` parent; not `default=HeartbeatSettings()`.
 
-### Phase 3 — Wire up and clean up
+### Phase 3 — Wire up and clean up ✅ DONE
 
-8. Rewrite `__main__.py`:
-   ```python
-   async def main():
-       settings = get_settings()
-       agent_service = AgentService(graph)
-       router = MessageRouter(agent_service)
-       router.register(TerminalAdapter())
-       router.register(DiscordAdapter(token=settings.discord_token))
-       router.register(HeartbeatAdapter(settings.heartbeat))
-       await router.run()
-   ```
-9. Delete `discord_bot.py`, `terminal_bot.py`, `heartbeat_bot.py`.
-10. Extend `config.py` / `.env` with heartbeat output destinations and per-adapter enable flags.
+14. ✅ `__main__.py` rewritten — sync `main()` entry point (required by `pyproject.toml` console-script); `build_router(settings, graph)` pure factory; `_setup_logging()` centralises logging (file + stderr); old bot imports removed.
+15. ✅ Old bot files deleted — `discord_bot.py`, `terminal_bot.py`, `heartbeat_bot.py`.
+16. ✅ `config.py` extended — `enabled_adapters: frozenset[str]` added to `Settings`; parsed from `ENABLED_ADAPTERS` env var; not set → all three; set to empty string → none.
+17. ✅ `tests/test_main.py` — 22 tests: config, `build_router()`, and 5 integration tests hitting the real compiled graph with a mocked LLM.
 
-### Phase 4 — Tests
+**Implementation notes discovered during Phase 3:**
 
-11. Unit-test `AgentService` with a mocked graph.
-12. Unit-test `MessageRouter.dispatch()` with a stub adapter and mock `AgentService`.
-13. Integration test: build the full router with `InMemorySaver` graph and a `TerminalAdapter` stub.
+- **`main()` must be synchronous** — the `pyproject.toml` console-script entry point (`agent.__main__:main`) is called directly by the script runner with no `asyncio.run()` wrapper. An `async def main()` would silently return an unawaited coroutine. Split into sync `main()` → `asyncio.run(_run())`.
+- **`build_router()` as a pure factory** — separating construction from `main()` makes the wiring fully testable without spawning real adapters or calling `asyncio.run()`.
+- **`ENABLED_ADAPTERS=""` (empty string) means no adapters** — use `os.environ.get("ENABLED_ADAPTERS")` (returns `None` when absent) rather than `os.getenv("ENABLED_ADAPTERS", "")` (returns `""` for both absent and explicitly empty). `None` → default all-three; `""` → empty set.
+- **Patch context must wrap the entire invocation** — `with patch("agent.nodes._get_llm_with_tools", ...)` only replaces the function for the duration of the `with` block. Since `router.dispatch()` creates a background task and returns immediately, `await task` must also be **inside** the `with` block or the real cached LLM will be used when the task runs after the context exits.
+- **Logging setup guarded against re-entrancy** — `_setup_logging()` checks `root.handlers` before adding handlers so tests that configure their own logging (or run multiple times) don’t accumulate duplicate handlers.
+- **Discord skipped gracefully, not an error** — when `"discord"` is enabled but the token is absent, a `WARNING` is logged and the adapter is simply not registered. This allows development without a Discord token while still having `ENABLED_ADAPTERS=terminal,discord,heartbeat` as the default.
+
+### Phase 4 — Tests ✅ DONE (covered across Phases 1–3)
+
+All originally planned test items are complete:
+- Unit tests for `AgentService` with mocked graph → `tests/test_router.py`
+- Unit tests for `MessageRouter.dispatch()` → `tests/test_router.py`
+- Adapter unit tests → `tests/test_adapters.py`
+- Integration test: real compiled graph + mocked LLM + stub adapter → `tests/test_main.py`
 
 ### Phase 5 — Future adapters (out of scope for now, design is ready)
 
@@ -272,19 +274,19 @@ The old `discord_bot.py`, `terminal_bot.py`, `heartbeat_bot.py` are **deleted** 
 
 ---
 
-## Configuration Extensions
+## Configuration Reference
 
-Add to `.env` / `Settings`:
+All settings are loaded from environment variables (`.env` file is supported via `python-dotenv`).
 
-```ini
-# Which adapters to enable (comma-separated)
-ENABLED_ADAPTERS=terminal,discord,heartbeat
-
-# Heartbeat
-HEARTBEAT_INTERVAL_SECONDS=600
-HEARTBEAT_OUTPUT_ADAPTERS=discord        # comma-sep list of adapter_ids
-HEARTBEAT_OUTPUT_CHANNEL=<discord_channel_id>  # adapter-specific channel
-```
+| Variable | Default | Description |
+|---|---|---|
+| `LLM_PROVIDER` | `openai` | LLM backend: `openai` or `anthropic` |
+| `MODEL_NAME` | *(provider default)* | Override the model name |
+| `TEMPERATURE` | `0` | LLM sampling temperature |
+| `DISCORD_BOT_TOKEN` | *(empty)* | Discord bot token; Discord adapter skipped if absent |
+| `ENABLED_ADAPTERS` | `terminal,discord,heartbeat` | Comma-separated list of adapters to start; unset = all three; `""` = none |
+| `HEARTBEAT_INTERVAL_SECONDS` | `600` | Seconds between heartbeat agent runs |
+| `HEARTBEAT_PROMPT_FILE` | `HEARTBEAT.md` | Path to the Markdown file sent to the agent on each tick |
 
 ---
 
@@ -308,9 +310,10 @@ HEARTBEAT_OUTPUT_CHANNEL=<discord_channel_id>  # adapter-specific channel
 
 ---
 
-## Open Questions
+## Open Questions / Future Work
 
-- **Concurrency per thread**: should multiple messages on the same `thread_id` be serialised (queue per thread) or processed in parallel? Current approach is serial to preserve checkpointer consistency. Decision: serialize it
-- **Verbosity control**: tool-call/result messages are useful in terminal but noisy in Discord DMs — add a per-adapter verbosity flag to `BaseAdapter`. Decision: add a per-adapter verbosity flag to `BaseAdapter`
-- **Error routing**: if `AgentService.run()` raises, should the error be sent back to the originating adapter, broadcast, or only logged? Propose: send back to originating adapter only. Decision: send back to originated adapter only.
-- **Multi-channel heartbeat fan-out**: heartbeat response could be routed to multiple adapters simultaneously — implement in Phase 3 if needed. Decision: First only to one adapter
+- **Multi-channel heartbeat fan-out**: heartbeat response could be routed to multiple adapters (e.g. log + Discord channel) — needs a fan-out mechanism in `HeartbeatAdapter` or `MessageRouter`.
+- **Graceful shutdown**: when `TerminalAdapter.start()` returns, `asyncio.gather` in `router.run()` keeps waiting for Discord/heartbeat. A cancellation token or shutdown event would allow any adapter to signal the whole system to stop.
+- **Per-adapter verbosity**: `AgentService` has a global `verbose` flag; a per-adapter flag (passed at registration) would let Discord be quiet while terminal is verbose.
+- **Web adapter** (`adapters/web_adapter.py`): `aiohttp` WebSocket or SSE endpoint — no router changes needed.
+- **Telegram adapter** (`adapters/telegram_adapter.py`): `python-telegram-bot` async client.
