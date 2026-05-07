@@ -29,6 +29,25 @@ _DEFAULT_MODELS: dict[Provider, str] = {
 
 
 @dataclass(frozen=True)
+class HeartbeatSettings:
+    """Configuration for the :class:`~agent.adapters.heartbeat_adapter.HeartbeatAdapter`."""
+
+    interval_seconds: int = field(default=600)
+    """How long to sleep between heartbeat runs (seconds)."""
+
+    prompt_file: str = field(default="HEARTBEAT.md")
+    """Path to the Markdown file whose content is sent to the agent each tick."""
+
+    output_adapter_id: str = field(default="")
+    """Adapter ID to forward heartbeat responses to (e.g. ``"discord"``).  Empty = log only."""
+
+    output_channel_id: str = field(default="")
+    """Adapter-specific destination for forwarded responses (e.g. a Discord channel ID)."""
+
+_ALL_ADAPTERS: frozenset[str] = frozenset({"terminal", "discord", "heartbeat"})
+
+
+@dataclass(frozen=True)
 class Settings:
     """Immutable runtime configuration."""
 
@@ -36,6 +55,11 @@ class Settings:
     model_name: str = field(default="")
     temperature: float = field(default=0.0)
     discord_token: str = field(default="")
+    heartbeat: HeartbeatSettings = field(default_factory=HeartbeatSettings)
+    enabled_adapters: frozenset[str] = field(
+        default_factory=lambda: frozenset({"terminal", "discord", "heartbeat"})
+    )
+    """Set of adapter IDs that should be started.  Controlled by ``ENABLED_ADAPTERS``."""
 
     @property
     def resolved_model(self) -> str:
@@ -52,11 +76,25 @@ def get_settings() -> Settings:
             "Choose 'openai' or 'anthropic'."
         )
     discord_token = os.getenv("DISCORD_BOT_TOKEN", "")
+    heartbeat = HeartbeatSettings(
+        interval_seconds=int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "600")),
+        prompt_file=os.getenv("HEARTBEAT_PROMPT_FILE", "HEARTBEAT.md"),
+        output_adapter_id=os.getenv("HEARTBEAT_OUTPUT_ADAPTER", ""),
+        output_channel_id=os.getenv("HEARTBEAT_OUTPUT_CHANNEL", ""),
+    )
+    raw_enabled = os.environ.get("ENABLED_ADAPTERS")
+    enabled_adapters: frozenset[str] = (
+        frozenset({"terminal", "discord", "heartbeat"})
+        if raw_enabled is None
+        else frozenset(a.strip() for a in raw_enabled.split(",") if a.strip())
+    )
     return Settings(
-        llm_provider = raw_provider,  # type: ignore[arg-type]
-        model_name = os.getenv("MODEL_NAME", ""),
-        temperature = float(os.getenv("TEMPERATURE", "0")),
-        discord_token = discord_token
+        llm_provider=raw_provider,  # type: ignore[arg-type]
+        model_name=os.getenv("MODEL_NAME", ""),
+        temperature=float(os.getenv("TEMPERATURE", "0")),
+        discord_token=discord_token,
+        heartbeat=heartbeat,
+        enabled_adapters=enabled_adapters,
     )
 
 
