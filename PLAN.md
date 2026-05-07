@@ -203,12 +203,23 @@ The old `discord_bot.py`, `terminal_bot.py`, `heartbeat_bot.py` are **deleted** 
 
 ## Implementation Steps
 
-### Phase 1 — Core router (no behaviour change)
+### Phase 1 — Core router (no behaviour change) ✅ DONE
 
-1. Create `router/messages.py` with `InboundMessage` and `OutboundMessage`.
-2. Create `router/base_adapter.py` with `BaseAdapter` ABC.
-3. Create `router/agent_service.py` — extract the stream-processing loop from `discord_bot.py` (most complete version) into `AgentService.run()`.
-4. Create `router/router.py` with `MessageRouter` (queue-based dispatch, adapter registry, `send_to`).
+1. ✅ `router/messages.py` — `InboundMessage`, `OutboundMessage`, `MessageType` literal.
+2. ✅ `router/base_adapter.py` — `BaseAdapter` ABC with `start()` and `send()` abstract methods.
+3. ✅ `router/agent_service.py` — `AgentService.run()` async generator; stream-processing loop extracted from `discord_bot.py`.
+4. ✅ `router/router.py` — `MessageRouter` with per-thread `asyncio.Lock` serialisation, `dispatch()`, `send_to()`, `run()`.
+5. ✅ `router/__init__.py` — re-exports all public symbols.
+6. ✅ `tests/test_router.py` — 30 tests, all passing (0 LLM calls).
+
+**Implementation notes discovered during Phase 1:**
+
+- **`dispatch()` returns `asyncio.Task[None]`** (not `None`). This keeps the public API fire-and-forget for adapters while letting tests `await` the task to synchronise on completion — a clean solution that needs no test-only hooks.
+- **`verbose` flag on `AgentService`** (default `True`). Controls whether `tool_call` / `tool_result` messages are yielded. Adapters can also filter by `msg_type` themselves, but the flag is a cheaper gate for adapters that never want intermediate steps.
+- **Guard for nodes without `"messages"` key.** Steps from internal LangGraph nodes (e.g. `__interrupt__`, future custom nodes) may not carry a `messages` key. `AgentService` skips such steps with `continue` rather than crashing.
+- **`asyncio.Lock` defaultdict is safe in Python 3.11.** `asyncio.Lock()` no longer requires a running event loop since Python 3.10, so `defaultdict(asyncio.Lock)` is fine as an instance attribute.
+- **Tool-result truncation uses `…` (U+2026), not `...`.** One character instead of three, matching the intent of a preview suffix.
+- **Queue-based dispatch was simplified.** The plan mentioned a queue; the implementation uses `asyncio.create_task` + per-thread locks instead. This achieves the same goals (fire-and-forget, serialised per thread, concurrent across threads) with less bookkeeping.
 
 ### Phase 2 — Refactor existing adapters
 
@@ -266,9 +277,12 @@ HEARTBEAT_OUTPUT_CHANNEL=<discord_channel_id>  # adapter-specific channel
 
 | Decision | Rationale |
 |---|---|
-| `asyncio.Queue` inside router | Adapters fire-and-forget; router processes sequentially per thread to avoid race conditions on the checkpointer |
+| `asyncio.create_task` + per-thread `Lock` instead of a queue | Same fire-and-forget semantics as a queue; per-thread lock serialises writes to the LangGraph checkpointer without a dedicated consumer coroutine |
+| `dispatch()` returns `asyncio.Task[None]` | Adapters ignore the return value; tests can `await` it to synchronise without any test-only hooks |
 | Thread ID owned by adapter | Each adapter knows its own identity scheme; router/service are ID-agnostic |
-| `AgentService` yields `OutboundMessage` | Keeps formatting concerns in adapters; service only classifies output type |
+| `AgentService` yields `OutboundMessage` | Keeps formatting concerns in adapters; service only classifies output type via `msg_type` |
+| `verbose` flag on `AgentService` | Cheaper than adapter-side filtering for channels that never want intermediate tool steps |
+| Guard for missing `"messages"` key | Future LangGraph nodes (or `__interrupt__`) may not produce messages; skipping instead of crashing is safer |
 | Heartbeat as an adapter | Uniform lifecycle (start/stop); fits the same `BaseAdapter` contract as interactive adapters |
 | Old bot files deleted (not kept) | Avoids confusion from two code paths doing the same thing |
 
