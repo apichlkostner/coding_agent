@@ -29,6 +29,17 @@ _DEFAULT_MODELS: dict[Provider, str] = {
 
 
 @dataclass(frozen=True)
+class HeartbeatSettings:
+    """Configuration for the :class:`~agent.adapters.heartbeat_adapter.HeartbeatAdapter`."""
+
+    interval_seconds: int = field(default=600)
+    """How long to sleep between heartbeat runs (seconds)."""
+
+    prompt_file: str = field(default="HEARTBEAT.md")
+    """Path to the Markdown file whose content is sent to the agent each tick."""
+
+
+@dataclass(frozen=True)
 class Settings:
     """Immutable runtime configuration."""
 
@@ -36,6 +47,7 @@ class Settings:
     model_name: str = field(default="")
     temperature: float = field(default=0.0)
     discord_token: str = field(default="")
+    heartbeat: HeartbeatSettings = field(default_factory=HeartbeatSettings)
 
     @property
     def resolved_model(self) -> str:
@@ -52,11 +64,16 @@ def get_settings() -> Settings:
             "Choose 'openai' or 'anthropic'."
         )
     discord_token = os.getenv("DISCORD_BOT_TOKEN", "")
+    heartbeat = HeartbeatSettings(
+        interval_seconds=int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "600")),
+        prompt_file=os.getenv("HEARTBEAT_PROMPT_FILE", "HEARTBEAT.md"),
+    )
     return Settings(
-        llm_provider = raw_provider,  # type: ignore[arg-type]
-        model_name = os.getenv("MODEL_NAME", ""),
-        temperature = float(os.getenv("TEMPERATURE", "0")),
-        discord_token = discord_token
+        llm_provider=raw_provider,  # type: ignore[arg-type]
+        model_name=os.getenv("MODEL_NAME", ""),
+        temperature=float(os.getenv("TEMPERATURE", "0")),
+        discord_token=discord_token,
+        heartbeat=heartbeat,
     )
 
 

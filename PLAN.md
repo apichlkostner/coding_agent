@@ -174,8 +174,8 @@ Future agent-initiated use cases follow the same pattern:
 
 ```
 src/agent/
-├── __main__.py              # thin wiring: build router, register adapters, run
-├── config.py                # extended: heartbeat config, adapter toggles
+├── __main__.py              # thin wiring: build router, register adapters, run  (Phase 3)
+├── config.py                # extended: HeartbeatSettings, adapter toggles
 ├── graph.py                 # unchanged
 ├── nodes.py                 # unchanged
 ├── state.py                 # unchanged
@@ -183,18 +183,18 @@ src/agent/
 ├── tools_cmd.py             # unchanged
 ├── tools_filesystem.py      # unchanged
 │
-├── router/
+├── router/                  # ✅ Phase 1
 │   ├── __init__.py
 │   ├── messages.py          # InboundMessage, OutboundMessage dataclasses
 │   ├── base_adapter.py      # BaseAdapter ABC
 │   ├── agent_service.py     # AgentService (stream logic, thread ID handling)
 │   └── router.py            # MessageRouter
 │
-└── adapters/
+└── adapters/                # ✅ Phase 2
     ├── __init__.py
-    ├── discord_adapter.py   # refactored from discord_bot.py
-    ├── terminal_adapter.py  # refactored from terminal_bot.py
-    └── heartbeat_adapter.py # refactored from heartbeat_bot.py
+    ├── discord_adapter.py   # replaces discord_bot.py
+    ├── terminal_adapter.py  # replaces terminal_bot.py
+    └── heartbeat_adapter.py # replaces heartbeat_bot.py
 ```
 
 The old `discord_bot.py`, `terminal_bot.py`, `heartbeat_bot.py` are **deleted** after the adapters are validated.
@@ -221,11 +221,26 @@ The old `discord_bot.py`, `terminal_bot.py`, `heartbeat_bot.py` are **deleted** 
 - **Tool-result truncation uses `…` (U+2026), not `...`.** One character instead of three, matching the intent of a preview suffix.
 - **Queue-based dispatch was simplified.** The plan mentioned a queue; the implementation uses `asyncio.create_task` + per-thread locks instead. This achieves the same goals (fire-and-forget, serialised per thread, concurrent across threads) with less bookkeeping.
 
-### Phase 2 — Refactor existing adapters
+### Phase 2 — Refactor existing adapters ✅ DONE
 
-5. `adapters/terminal_adapter.py` — wraps existing REPL; calls `router.dispatch()` per user input; `send()` prints to stdout.
-6. `adapters/discord_adapter.py` — wraps `discord.Client`; `on_message` builds `InboundMessage` and calls `router.dispatch()`; `send()` chunks and posts to channel.
-7. `adapters/heartbeat_adapter.py` — periodic trigger; reads `HEARTBEAT.md`; builds `InboundMessage`; configurable output destination(s) read from `config.py`.
+7. ✅ `adapters/__init__.py` — package, re-exports all three adapters.
+8. ✅ `adapters/terminal_adapter.py` — REPL adapter; `start()` awaits each dispatch task before re-prompting; `send()` formats by `msg_type` with `[node_name]` prefix.
+9. ✅ `adapters/discord_adapter.py` — composition over inheritance to avoid `discord.Client.start(token)` vs `BaseAdapter.start(router)` conflict; `_handle_message` wraps `await task` inside `channel.typing()`; `send()` delivers only `response`/`error`, skips tool steps.
+10. ✅ `adapters/heartbeat_adapter.py` — reads prompt file once on start; dispatches on configured interval; `send()` logs all output.
+11. ✅ `config.py` extended — `HeartbeatSettings` dataclass embedded in `Settings`; reads `HEARTBEAT_INTERVAL_SECONDS` and `HEARTBEAT_PROMPT_FILE` env vars.
+12. ✅ `router/agent_service.py` patched — `node_name` added to every `OutboundMessage.metadata` so adapters can reproduce the old `[node] …` prefix format.
+13. ✅ `tests/test_adapters.py` — 43 tests, all passing (0 LLM/Discord API calls).
+
+**Implementation notes discovered during Phase 2:**
+
+- **`discord.Client.start(token)` conflicts with `BaseAdapter.start(router)`** — solved by composition: a private `_DiscordClient(discord.Client)` handles Discord events and delegates to `DiscordAdapter`; `DiscordAdapter(BaseAdapter)` owns the client and has the correct `start(router)` signature.
+- **Typing indicator via `await task`** — `_handle_message` wraps `await router.dispatch(inbound); await task` inside `async with channel.typing()`. The typing context exits only after the full agent run, matching the original UX.
+- **Discord verbosity** — `send()` silently drops `tool_call` and `tool_result` messages. This matches the original bot's actual behavior (the buffer was overwritten by the final response, so tool steps were only logged, never shown to the user).
+- **Terminal `KeyboardInterrupt` re-raised** — `start()` catches `EOFError` and returns normally, but re-raises `KeyboardInterrupt` so `asyncio.run()` can cancel all tasks and exit cleanly. Old `sys.exit(0)` is gone.
+- **Terminal awaits dispatch task** — `await task` before looping back to the prompt ensures the full response is printed before the next `You:` prompt appears. This is intentional blocking, not a bug.
+- **`asyncio.sleep` patch leaks into background tasks** — when patching `asyncio.sleep` to stop the heartbeat loop, any `asyncio.sleep(0)` called inside the mock dispatch task was also intercepted and raised `CancelledError` prematurely. Fixed in tests by using a plain `noop()` coroutine inside mock tasks instead of `asyncio.sleep(0)`.
+- **`MagicMock.__aenter__` receives `self`** — assigning an `async def f()` directly as `mock.__aenter__ = f` causes a call-with-self failure. Fixed by using `async def f(*_)` to absorb the implicit `self` argument.
+- **`HeartbeatSettings` as a frozen dataclass field** — `field(default_factory=HeartbeatSettings)` is the correct way to embed a mutable-default nested dataclass inside a `frozen=True` parent; not `default=HeartbeatSettings()`.
 
 ### Phase 3 — Wire up and clean up
 
@@ -281,10 +296,15 @@ HEARTBEAT_OUTPUT_CHANNEL=<discord_channel_id>  # adapter-specific channel
 | `dispatch()` returns `asyncio.Task[None]` | Adapters ignore the return value; tests can `await` it to synchronise without any test-only hooks |
 | Thread ID owned by adapter | Each adapter knows its own identity scheme; router/service are ID-agnostic |
 | `AgentService` yields `OutboundMessage` | Keeps formatting concerns in adapters; service only classifies output type via `msg_type` |
+| `node_name` in `OutboundMessage.metadata` | Terminal and heartbeat adapters reproduce the old `[node] …` format; Discord ignores it |
 | `verbose` flag on `AgentService` | Cheaper than adapter-side filtering for channels that never want intermediate tool steps |
 | Guard for missing `"messages"` key | Future LangGraph nodes (or `__interrupt__`) may not produce messages; skipping instead of crashing is safer |
+| Composition over inheritance for `DiscordAdapter` | `discord.Client.start(token)` and `BaseAdapter.start(router)` have incompatible signatures; a private `_DiscordClient` inner class handles Discord events and delegates to the adapter |
+| Terminal `start()` re-raises `KeyboardInterrupt` | Lets `asyncio.run()` cancel all tasks cleanly; `sys.exit()` is gone |
+| Terminal `start()` awaits task | Ensures full agent response is printed before next `You:` prompt; intentional sequential UX |
+| Discord `send()` drops tool steps | Matches original bot behavior (buffer was overwritten by final response; tool steps were only logged) |
 | Heartbeat as an adapter | Uniform lifecycle (start/stop); fits the same `BaseAdapter` contract as interactive adapters |
-| Old bot files deleted (not kept) | Avoids confusion from two code paths doing the same thing |
+| Old bot files kept until Phase 3 | Avoid breaking `__main__.py` before Phase 3 wires everything up |
 
 ---
 

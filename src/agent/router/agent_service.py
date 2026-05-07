@@ -54,12 +54,12 @@ class AgentService:
         """
         config = {"configurable": {"thread_id": message.thread_id}}
 
-        def _make(content: str, msg_type: str) -> OutboundMessage:
+        def _make(content: str, msg_type: str, node_name: str = "") -> OutboundMessage:
             return OutboundMessage(
                 adapter_id=message.adapter_id,
                 reply_channel_id=message.reply_channel_id,
                 content=content,
-                metadata={"msg_type": msg_type},
+                metadata={"msg_type": msg_type, "node_name": node_name},
             )
 
         try:
@@ -83,7 +83,7 @@ class AgentService:
                     )
                     logger.info("[%s] tool calls: %s", node_name, calls)
                     if self._verbose:
-                        yield _make(calls, "tool_call")
+                        yield _make(calls, "tool_call", node_name)
 
                 elif hasattr(last_msg, "name") and last_msg.name is not None:
                     # ToolMessage — execution result
@@ -92,7 +92,7 @@ class AgentService:
                         preview += "…"
                     logger.info("[%s] tool result: %s", node_name, preview)
                     if self._verbose:
-                        yield _make(preview, "tool_result")
+                        yield _make(preview, "tool_result", node_name)
 
                 else:
                     # Final agent response
@@ -101,7 +101,7 @@ class AgentService:
                         node_name,
                         last_msg.content[:100],
                     )
-                    yield _make(last_msg.content, "response")
+                    yield _make(last_msg.content, "response", node_name)
 
         except Exception as exc:  # noqa: BLE001
             logger.error("AgentService error for thread '%s': %s", message.thread_id, exc)
