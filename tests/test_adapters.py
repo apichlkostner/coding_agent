@@ -680,3 +680,201 @@ class TestHeartbeatAdapterStart:
         adapter = HeartbeatAdapter()
         assert adapter._settings.interval_seconds == 600
         assert adapter._settings.prompt_file == "HEARTBEAT.md"
+
+    async def test_start_stores_router_reference(self, tmp_path: Path) -> None:
+        """Router passed to start() must be reachable from send() for forwarding."""
+        prompt_file = tmp_path / "beat.md"
+        prompt_file.write_text("ping", encoding="utf-8")
+
+        adapter = HeartbeatAdapter(HeartbeatSettings(prompt_file=str(prompt_file)))
+        assert adapter._router is None
+
+        router, _ = _mock_router_with_dispatch()
+        with patch("asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())):
+            with pytest.raises(asyncio.CancelledError):
+                await adapter.start(router)
+
+        assert adapter._router is router
+
+
+# ===========================================================================
+# HeartbeatAdapter — forwarding
+# ===========================================================================
+
+
+def _mock_router_with_forwarding() -> tuple[MagicMock, list[InboundMessage], list[OutboundMessage]]:
+    """Router mock that records both dispatched inbound and send_to outbound messages."""
+    dispatched: list[InboundMessage] = []
+    forwarded: list[OutboundMessage] = []
+
+    async def _noop() -> None:
+        pass
+
+    async def fake_dispatch(msg: InboundMessage) -> asyncio.Task[None]:
+        dispatched.append(msg)
+        return asyncio.create_task(_noop())
+
+    async def fake_send_to(msg: OutboundMessage) -> None:
+        forwarded.append(msg)
+
+    router = MagicMock()
+    router.dispatch = fake_dispatch
+    router.send_to = fake_send_to
+    return router, dispatched, forwarded
+
+
+class TestHeartbeatAdapterForwarding:
+    async def test_send_forwards_response_to_output_adapter(self) -> None:
+        settings = HeartbeatSettings(
+            output_adapter_id="discord",
+            output_channel_id="99999",
+        )
+        adapter = HeartbeatAdapter(settings)
+        router, _, forwarded = _mock_router_with_forwarding()
+        adapter._router = router  # type: ignore[assignment]
+
+        msg = _outbound(
+            content="Heartbeat done.",
+            adapter_id="heartbeat",
+            reply_channel_id="log",
+            msg_type="response",
+        )
+        await adapter.send(msg)
+
+        assert len(forwarded) == 1
+        assert forwarded[0].adapter_id == "discord"
+        assert forwarded[0].reply_channel_id == "99999"
+        assert forwarded[0].content == "Heartbeat done."
+
+    async def test_send_forwards_error_to_output_adapter(self) -> None:
+        settings = HeartbeatSettings(
+            output_adapter_id="discord",
+            output_channel_id="99999",
+        )
+        adapter = HeartbeatAdapter(settings)
+        router, _, forwarded = _mock_router_with_forwarding()
+        adapter._router = router  # type: ignore[assignment]
+
+        await adapter.send(
+            _outbound(content="boom", msg_type="error", adapter_id="heartbeat", reply_channel_id="log")
+        )
+
+        assert len(forwarded) == 1
+        assert forwarded[0].msg_type == "error"
+
+    async def test_send_forwards_tool_call_to_output_adapter(self) -> None:
+        """All msg_types are forwarded; the target adapter decides what to render."""
+        settings = HeartbeatSettings(
+            output_adapter_id="discord",
+            output_channel_id="99999",
+        )
+        adapter = HeartbeatAdapter(settings)
+        router, _, forwarded = _mock_router_with_forwarding()
+        adapter._router = router  # type: ignore[assignment]
+
+        await adapter.send(
+            _outbound(content="bash(...)", msg_type="tool_call", adapter_id="heartbeat", reply_channel_id="log")
+        )
+
+        assert len(forwarded) == 1
+        assert forwarded[0].msg_type == "tool_call"
+
+    async def test_send_preserves_metadata_when_forwarding(self) -> None:
+        settings = HeartbeatSettings(
+            output_adapter_id="discord", output_channel_id="1"
+        )
+        adapter = HeartbeatAdapter(settings)
+        router, _, forwarded = _mock_router_with_forwarding()
+        adapter._router = router  # type: ignore[assignment]
+
+        msg = OutboundMessage(
+            adapter_id="heartbeat",
+            reply_channel_id="log",
+            content="done",
+            metadata={"msg_type": "response", "node_name": "agent"},
+        )
+        await adapter.send(msg)
+
+        assert forwarded[0].metadata["node_name"] == "agent"
+
+    async def test_send_does_not_forward_without_output_adapter(self) -> None:
+        adapter = HeartbeatAdapter(HeartbeatSettings())  # no output config
+        router, _, forwarded = _mock_router_with_forwarding()
+        adapter._router = router  # type: ignore[assignment]
+
+        await adapter.send(_outbound(msg_type="response", adapter_id="heartbeat", reply_channel_id="log"))
+
+        assert len(forwarded) == 0
+
+    async def test_send_does_not_forward_when_only_adapter_set(self) -> None:
+        """Both output_adapter_id AND output_channel_id must be set."""
+        settings = HeartbeatSettings(output_adapter_id="discord", output_channel_id="")
+        adapter = HeartbeatAdapter(settings)
+        router, _, forwarded = _mock_router_with_forwarding()
+        adapter._router = router  # type: ignore[assignment]
+
+        await adapter.send(_outbound(msg_type="response", adapter_id="heartbeat", reply_channel_id="log"))
+        assert len(forwarded) == 0
+
+    async def test_send_does_not_forward_when_only_channel_set(self) -> None:
+        settings = HeartbeatSettings(output_adapter_id="", output_channel_id="99999")
+        adapter = HeartbeatAdapter(settings)
+        router, _, forwarded = _mock_router_with_forwarding()
+        adapter._router = router  # type: ignore[assignment]
+
+        await adapter.send(_outbound(msg_type="response", adapter_id="heartbeat", reply_channel_id="log"))
+        assert len(forwarded) == 0
+
+    async def test_send_logs_warning_when_router_not_set(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        settings = HeartbeatSettings(
+            output_adapter_id="discord", output_channel_id="99999"
+        )
+        adapter = HeartbeatAdapter(settings)
+        # _router intentionally left as None
+
+        with caplog.at_level(logging.WARNING, logger="agent.adapters.heartbeat_adapter"):
+            await adapter.send(
+                _outbound(msg_type="response", adapter_id="heartbeat", reply_channel_id="log")
+            )
+
+        assert any("router" in r.message.lower() for r in caplog.records)
+
+    async def test_start_forwarding_config_logged(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+
+        prompt_file = tmp_path / "beat.md"
+        prompt_file.write_text("ping", encoding="utf-8")
+        settings = HeartbeatSettings(
+            prompt_file=str(prompt_file),
+            output_adapter_id="discord",
+            output_channel_id="12345",
+        )
+        adapter = HeartbeatAdapter(settings)
+        router, _ = _mock_router_with_dispatch()
+
+        with caplog.at_level(logging.INFO, logger="agent.adapters.heartbeat_adapter"):
+            with patch("asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())):
+                with pytest.raises(asyncio.CancelledError):
+                    await adapter.start(router)
+
+        assert any("discord:12345" in r.message for r in caplog.records)
+
+
+class TestHeartbeatSettingsForwarding:
+    def test_defaults_have_no_forwarding(self) -> None:
+        s = HeartbeatSettings()
+        assert s.output_adapter_id == ""
+        assert s.output_channel_id == ""
+
+    def test_output_adapter_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("HEARTBEAT_OUTPUT_ADAPTER", "discord")
+        monkeypatch.setenv("HEARTBEAT_OUTPUT_CHANNEL", "123456789")
+        from agent.config import get_settings
+        s = get_settings()
+        assert s.heartbeat.output_adapter_id == "discord"
+        assert s.heartbeat.output_channel_id == "123456789"

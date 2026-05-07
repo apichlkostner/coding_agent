@@ -38,6 +38,11 @@ class HeartbeatSettings:
     prompt_file: str = field(default="HEARTBEAT.md")
     """Path to the Markdown file whose content is sent to the agent each tick."""
 
+    output_adapter_id: str = field(default="")
+    """Adapter ID to forward heartbeat responses to (e.g. ``"discord"``).  Empty = log only."""
+
+    output_channel_id: str = field(default="")
+    """Adapter-specific destination for forwarded responses (e.g. a Discord channel ID)."""
 
 _ALL_ADAPTERS: frozenset[str] = frozenset({"terminal", "discord", "heartbeat"})
 
@@ -74,6 +79,8 @@ def get_settings() -> Settings:
     heartbeat = HeartbeatSettings(
         interval_seconds=int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "600")),
         prompt_file=os.getenv("HEARTBEAT_PROMPT_FILE", "HEARTBEAT.md"),
+        output_adapter_id=os.getenv("HEARTBEAT_OUTPUT_ADAPTER", ""),
+        output_channel_id=os.getenv("HEARTBEAT_OUTPUT_CHANNEL", ""),
     )
     raw_enabled = os.environ.get("ENABLED_ADAPTERS")
     enabled_adapters: frozenset[str] = (
