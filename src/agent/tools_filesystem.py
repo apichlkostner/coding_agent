@@ -8,15 +8,17 @@ from __future__ import annotations
 
 import os
 import re
-
-from langchain_core.tools import BaseTool, tool
 from pathlib import Path
+
+from langchain_core.tools import tool
+
 
 def _is_subpath(file_path: str | Path, strict: bool = False) -> bool:
     file_path = Path(file_path).resolve(strict=strict)
     cwd = os.getcwd()
     project_path = Path(cwd).resolve(strict=strict)
     return file_path.is_relative_to(project_path)
+
 
 def _entry_type(p: Path) -> str:
     if p.is_symlink():
@@ -27,9 +29,11 @@ def _entry_type(p: Path) -> str:
         return "file"
     return "other"
 
+
 # ---------------------------------------------------------------------------
 # Filesystem tools
 # ---------------------------------------------------------------------------
+
 
 @tool
 def read_file(path: str, offset: int = 0, lines: int = 0) -> str:
@@ -46,7 +50,7 @@ def read_file(path: str, offset: int = 0, lines: int = 0) -> str:
     read_file("docs/index.md", 1, 1) -> "## Introduction"
     """
     try:
-        if (_is_subpath(path, strict=True)):
+        if _is_subpath(path, strict=True):
             with open(path, "r", encoding="utf-8") as f:
                 count = 0
                 result = ""
@@ -54,13 +58,14 @@ def read_file(path: str, offset: int = 0, lines: int = 0) -> str:
                     if count >= offset:
                         result += line
                     count += 1
-                    if (lines > 0 and count >= offset + lines):
+                    if lines > 0 and count >= offset + lines:
                         break
                 return result
         else:
             return "Error: Path is not inside the project folder"
     except Exception as err:
         return f"Error: {err}"
+
 
 @tool
 def write_file(path: str | Path, content: str) -> str:
@@ -73,18 +78,22 @@ def write_file(path: str | Path, content: str) -> str:
     write_file("docs/test.md", "# My new test docu")
     """
     # TODO: create parent folder if needed
+    path = Path(path)
     try:
-        if (_is_subpath(path, strict=False)):
+        if _is_subpath(path, strict=False):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
                 return "Success"
         else:
-            return "Error: Path " + path.as_posix() + " is not inside the project folder"
+            return (
+                "Error: Path " + path.as_posix() + " is not inside the project folder"
+            )
     except Exception as err:
         return f"Error: {err}"
 
+
 @tool
-def list_directory(path: str | Path) -> list:
+def list_directory(path: str | Path) -> str:
     """Lists the content of a directory at the given path.
 
     Example
@@ -92,14 +101,15 @@ def list_directory(path: str | Path) -> list:
     list_directory("docs") -> "[file1, file2, file3]"
     """
     try:
-        if (_is_subpath(path, strict=True)):
+        if _is_subpath(path, strict=True):
             directory = Path(path)
-            entries = list((e.name, _entry_type(e)) for e in directory.iterdir()) 
+            entries = str(list((e.name, _entry_type(e)) for e in directory.iterdir()))
             return entries
         return "Error: Path is not inside the project folder"
     except Exception as err:
         return f"Error: {err}"
-    
+
+
 @tool
 def create_directory(path: str | Path) -> str:
     """Creates a directory, including parents
@@ -109,7 +119,7 @@ def create_directory(path: str | Path) -> str:
     create_folder("docs/internal") -> "Success
     """
     try:
-        if (_is_subpath(path, strict=False)):
+        if _is_subpath(path, strict=False):
             path = Path(path)
             path.mkdir(parents=True, exist_ok=True)
             return "Success"
@@ -117,8 +127,11 @@ def create_directory(path: str | Path) -> str:
     except Exception as err:
         return f"Error: {err}"
 
+
 @tool
-def replace_in_file(path: str | Path, old_string: str, new_string: str, replace_all: bool = False) -> str:
+def replace_in_file(
+    path: str | Path, old_string: str, new_string: str, replace_all: bool = False
+) -> str:
     """Replaces a string in a file with another string.
     Returns "Replaced {number of replaces} times" on success
     Returns an Error string if the old_string is not unique and replace_all is not True
@@ -128,20 +141,20 @@ def replace_in_file(path: str | Path, old_string: str, new_string: str, replace_
     replace_in_file("docs/test.txt", "old text", "new text") -> "Success"
     """
     try:
-        if (_is_subpath(path, strict=True)):
+        if _is_subpath(path, strict=True):
             path = Path(path)
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()                
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
                 count = content.count(old_string)
-                
+
                 if count == 0:
                     return f"Error: {old_string} not found in file {path.as_posix()}"
                 elif count > 1 and not replace_all:
                     return f"Error: {old_string} found {count} times in file {path.as_posix()}"
-                
+
                 new_content = content.replace(old_string, new_string)
-                
-                with open(path, 'w') as f:
+
+                with open(path, "w") as f:
                     f.write(new_content)
 
                 return f"Replaced {count} times"
@@ -149,8 +162,15 @@ def replace_in_file(path: str | Path, old_string: str, new_string: str, replace_
     except Exception as err:
         return f"Error: {err}"
 
+
 @tool
-def grep(pattern: str, directory: str | Path, file_pattern: list = ["*"], case_sensitive: bool = True, skip_dirs: set = None) -> list:
+def grep(
+    pattern: str,
+    directory: str | Path,
+    file_pattern: list[str] | None = None,
+    case_sensitive: bool = True,
+    skip_dirs: set[str] | None = None,
+) -> str:
     """Greps for given pattern
 
     Args:
@@ -164,8 +184,12 @@ def grep(pattern: str, directory: str | Path, file_pattern: list = ["*"], case_s
     -------
     grep("test", ".", ["*.py"], False, {".git", ".venv"}) -> ['tests/testfolder/folder1/test.py:2:def test():']
     """
+    if file_pattern is None:
+        file_pattern = ["*"]
+    if skip_dirs is None:
+        skip_dirs = set()
     try:
-        if (_is_subpath(directory, strict=True)):
+        if _is_subpath(directory, strict=True):
             directory = Path(directory)
             flags = 0 if case_sensitive else re.IGNORECASE
             regex = re.compile(pattern, flags)
@@ -176,16 +200,18 @@ def grep(pattern: str, directory: str | Path, file_pattern: list = ["*"], case_s
                         continue
                     if skip_dirs and any(part in skip_dirs for part in filepath.parts):
                         continue
-                    
+
                     try:
-                        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                        with open(filepath, encoding="utf-8", errors="ignore") as f:
                             for line_num, line in enumerate(f, 1):
                                 if regex.search(line):
-                                    matches.append(f"{filepath}:{line_num}:{line.rstrip()}")
+                                    matches.append(
+                                        f"{filepath}:{line_num}:{line.rstrip()}"
+                                    )
                     except Exception as err:
                         matches.append(f"Error: {err}")
 
-            return matches
-        return ["Error: Directory is not inside the project folder"]
+            return str(matches)
+        return "Error: Directory is not inside the project folder"
     except Exception as err:
-        return [f"Error: {err}"]
+        return f"Error: {err}"

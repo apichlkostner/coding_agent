@@ -48,7 +48,7 @@ class BaseAdapter(ABC):
     adapter_id: str
 
     @abstractmethod
-    async def start(self, router: "MessageRouter") -> None:
+    async def start(self, router: MessageRouter) -> None:
         """Begin listening for events and run until the adapter shuts down.
 
         Implementations should call ``await router.dispatch(inbound_message)``

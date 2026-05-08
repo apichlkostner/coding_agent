@@ -18,14 +18,20 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from agent.config import Settings, get_settings
+from agent.config import get_settings
 from agent.state import AgentState
 from agent.tools import calculate, get_current_datetime, get_tools
-from agent.tools_filesystem import read_file, write_file, list_directory, grep, replace_in_file, create_directory
 from agent.tools_cmd import bash
-
+from agent.tools_filesystem import (
+    create_directory,
+    grep,
+    list_directory,
+    read_file,
+    replace_in_file,
+    write_file,
+)
 
 # ---------------------------------------------------------------------------
 # Tool tests — no LLM required
@@ -80,6 +86,7 @@ class TestGetCurrentDatetimeTool:
         result = get_current_datetime.invoke({})
         assert "+00:00" in result
 
+
 class TestReadFileTool:
     def test_returns_file_content(self) -> None:
         result = read_file.invoke("tests/testfile.md")
@@ -88,6 +95,7 @@ class TestReadFileTool:
     def test_path_outside_project(self) -> None:
         result = read_file.invoke("../testfile.md")
         assert result.startswith("Error:")
+
 
 class TestWriteReadFileTool:
     def test_roundtrip(self) -> None:
@@ -107,13 +115,16 @@ A rose by any other name would smell as sweet.
         result = read_file.invoke({"path": file_path, "offset": 1, "lines": 1})
         assert result == "To be, or not to be, that is the question.\n"
 
+
 class TestReplaceInFileTool:
     def test_roundtrip(self) -> None:
         test_string: str = "Hello world 1234"
         file_path: str = "tests/readwrite.md"
         write_file.invoke({"path": file_path, "content": test_string})
 
-        result_replace = replace_in_file.invoke({"path": file_path, "old_string": "world", "new_string": "sun"})
+        result_replace = replace_in_file.invoke(
+            {"path": file_path, "old_string": "world", "new_string": "sun"}
+        )
         assert result_replace == "Replaced 1 times"
 
         result = read_file.invoke(file_path)
@@ -127,23 +138,38 @@ A rose by any other name would smell as sweet.
         file_path: str = "tests/readwrite.md"
         write_file.invoke({"path": file_path, "content": test_string})
 
-        result_replace = replace_in_file.invoke({"path": file_path, "old_string": "be", "new_string": "see"})
+        result_replace = replace_in_file.invoke(
+            {"path": file_path, "old_string": "be", "new_string": "see"}
+        )
         assert result_replace.startswith("Error:")
 
-        result_replace = replace_in_file.invoke({"path": file_path, "old_string": "123456", "new_string": "654321"})
+        result_replace = replace_in_file.invoke(
+            {"path": file_path, "old_string": "123456", "new_string": "654321"}
+        )
         assert result_replace.startswith("Error:")
 
         result = read_file.invoke({"path": file_path})
         assert result == test_string
 
-        result_replace = replace_in_file.invoke({"path": file_path, "old_string": "be", "new_string": "see", "replace_all": True})
+        result_replace = replace_in_file.invoke(
+            {
+                "path": file_path,
+                "old_string": "be",
+                "new_string": "see",
+                "replace_all": True,
+            }
+        )
         assert result_replace == "Replaced 2 times"
 
         result = read_file.invoke({"path": file_path})
-        assert result == """All that glitters is not gold.
+        assert (
+            result
+            == """All that glitters is not gold.
 To see, or not to see, that is the question.
 A rose by any other name would smell as sweet.
         """
+        )
+
 
 class TestCreateDirectoryTool:
     def test_existing_parent_folder(self) -> None:
@@ -160,23 +186,48 @@ class TestCreateDirectoryTool:
         assert os.path.isdir(new_folder)
         os.removedirs(new_folder)
 
+
 class TestGrepTool:
     def test_grep(self) -> None:
-        result = grep.invoke({"pattern": "def", "directory": "tests/testfolder", "file_pattern": ["*.py"], "case_sensitive": False, "skip_dirs": {".venv"}})
-        
-        assert result == ['tests/testfolder/folder1/test.py:2:def test():']
+        result = grep.invoke(
+            {
+                "pattern": "def",
+                "directory": "tests/testfolder",
+                "file_pattern": ["*.py"],
+                "case_sensitive": False,
+                "skip_dirs": {".venv"},
+            }
+        )
+
+        assert result == "['tests/testfolder/folder1/test.py:2:def test():']"
 
     def test_grep_multi_file_extensions(self) -> None:
-        result = grep.invoke({"pattern": "def", "directory": "tests/testfolder", "file_pattern": ["*.py", "*.cpp"], "case_sensitive": False, "skip_dirs": {".venv"}})
-        
-        assert result == ['tests/testfolder/folder1/test.py:2:def test():', 'tests/testfolder/folder1/test.cpp:2:#define MAX 1000']
+        result = grep.invoke(
+            {
+                "pattern": "def",
+                "directory": "tests/testfolder",
+                "file_pattern": ["*.py", "*.cpp"],
+                "case_sensitive": False,
+                "skip_dirs": {".venv"},
+            }
+        )
+
+        assert (
+            result
+            == "['tests/testfolder/folder1/test.py:2:def test():', 'tests/testfolder/folder1/test.cpp:2:#define MAX 1000']"
+        )
+
 
 class TestListDirectoryTool:
     def test_list_directory(self) -> None:
         dir_path: str = "tests/testfolder"
         result = list_directory.invoke({"path": dir_path})
-        
-        assert result == [('.venv', 'dir'), ('file1', 'file'), ('folder1', 'dir'), ('file2', 'file')]
+
+        assert (
+            result
+            == "[('.venv', 'dir'), ('file1', 'file'), ('folder1', 'dir'), ('file2', 'file')]"
+        )
+
 
 class TestGetTools:
     def test_always_includes_builtins(self) -> None:
@@ -185,7 +236,9 @@ class TestGetTools:
         assert "calculate" in names
         assert "get_current_datetime" in names
 
-    def test_web_search_absent_without_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_web_search_absent_without_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         tools = get_tools()
         names = {t.name for t in tools}
@@ -212,7 +265,9 @@ class TestSettings:
         assert s.llm_provider == "anthropic"
         assert "claude" in s.resolved_model
 
-    def test_explicit_model_name_overrides_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_explicit_model_name_overrides_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "openai")
         monkeypatch.setenv("MODEL_NAME", "gpt-5.4-mini")
         s = get_settings()
@@ -292,5 +347,5 @@ class TestCBashTool:
     def test_existing_parent_folder(self) -> None:
         command = "uname && ls"
         result = bash.invoke({"command": command})
-        
+
         assert result.startswith("exit_code:")
