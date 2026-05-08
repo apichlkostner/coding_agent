@@ -1,0 +1,62 @@
+{
+  "name": "coding_agent",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  // Run as the non-root user provided by the base image.
+  "remoteUser": "vscode",
+
+  // Mount the workspace at the standard location.
+  "workspaceFolder": "/workspaces/coding_agent",
+
+  // ---------------------------------------------------------------------------
+  // Mount the host pi config directory into the container so credentials,
+  // settings, sessions, extensions, skills, prompts, themes, and custom
+  // models are shared automatically. No re-authentication required.
+  // ---------------------------------------------------------------------------
+  "mounts": [
+    {
+      "source": "${localEnv:HOME}/.pi/agent",
+      "target": "/home/vscode/.pi/agent",
+      "type": "bind"
+    }
+  ],
+
+  // Post-create: install all Python dependencies (including dev group).
+  // uv reads pyproject.toml and writes a .venv inside the workspace.
+  // ---------------------------------------------------------------------------
+  "postCreateCommand": "uv sync --all-groups",
+
+  // ---------------------------------------------------------------------------
+  // VS Code extensions installed automatically inside the container.
+  // ---------------------------------------------------------------------------
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // Python language support
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        // Linter / formatter (matches ruff in pyproject.toml)
+        "charliermarsh.ruff",
+        // Static type checking (matches mypy in pyproject.toml)
+        "ms-python.mypy-type-checker",
+        // TOML editing (pyproject.toml)
+        "tamasfe.even-better-toml",
+        // Dotenv file highlighting
+        "mikestead.dotenv"
+      ],
+      "settings": {
+        // Point the Python extension at the uv-managed virtual environment.
+        "python.defaultInterpreterPath": "/workspaces/coding_agent/.venv/bin/python",
+        // Use ruff as the default formatter.
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        }
+      }
+    }
+  }
+}
