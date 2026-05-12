@@ -55,7 +55,7 @@ def _setup_logging() -> None:
 
 def build_router(
     settings: Settings,
-    graph: "CompiledStateGraph | None" = None,
+    graph: CompiledStateGraph | None = None,
 ) -> MessageRouter:
     """Build and return a configured :class:`~agent.router.router.MessageRouter`.
 

@@ -37,6 +37,11 @@ from agent.tools_filesystem import (
     replace_in_file,
     write_file,
 )
+from agent.tools_treesitter import (
+    treesitter_get_symbols,
+    treesitter_parse,
+    treesitter_query,
+)
 
 # ---------------------------------------------------------------------------
 # Built-in tools
@@ -140,6 +145,9 @@ def get_tools() -> list[BaseTool]:
         replace_in_file,
         create_directory,
         bash,
+        treesitter_parse,
+        treesitter_query,
+        treesitter_get_symbols,
     ]
 
     web_search = _make_web_search_tool()

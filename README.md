@@ -215,6 +215,9 @@ The `agent` node prepends a system prompt (with today's date) and calls the LLM 
 | `replace_in_file` | `tools_filesystem.py` | Replace a string inside a file |
 | `grep` | `tools_filesystem.py` | Regex search across files in a directory |
 | `bash` | `tools_cmd.py` | Run an arbitrary shell command |
+| `treesitter_parse` | `tools_treesitter.py` | Parse a source file or code string into a JSON syntax tree (bounded by depth and character limit) |
+| `treesitter_query` | `tools_treesitter.py` | Run a tree-sitter S-expression query against a source file or code string; returns matched captures as JSON |
+| `treesitter_get_symbols` | `tools_treesitter.py` | Extract top-level symbols (functions, classes, imports) from a source file using built-in per-language queries |
 
 All filesystem and shell tools restrict access to paths inside the project working directory.
 
