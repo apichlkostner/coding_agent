@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import json
 import os
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from agent.config import get_settings
+from agent.config import Settings, get_llm, get_settings
 from agent.state import AgentState
 from agent.tools import calculate, get_current_datetime, get_tools
 from agent.tools_cmd import bash
@@ -266,6 +267,19 @@ class TestSettings:
         assert s.llm_provider == "anthropic"
         assert "claude" in s.resolved_model
 
+    def test_ollama_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        monkeypatch.setenv("MODEL_NAME", "")
+        s = get_settings()
+        assert s.llm_provider == "ollama"
+        assert s.resolved_model == "qwen2.5-coder:14b"
+
+    def test_ollama_base_url_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+        s = get_settings()
+        assert s.ollama_base_url == "http://localhost:11434"
+
     def test_explicit_model_name_overrides_default(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -276,8 +290,66 @@ class TestSettings:
 
     def test_invalid_provider_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "cohere")
-        with pytest.raises(ValueError, match="Unsupported LLM_PROVIDER"):
+        with pytest.raises(
+            ValueError,
+            match="Choose 'openai', 'anthropic', or 'ollama'",
+        ):
             get_settings()
+
+
+class TestGetLlmFactory:
+    def test_openai_provider_branch(self) -> None:
+        mock_chat_openai = MagicMock(name="ChatOpenAI")
+        fake_module = types.SimpleNamespace(ChatOpenAI=mock_chat_openai)
+
+        with patch.dict("sys.modules", {"langchain_openai": fake_module}):
+            settings = Settings(
+                llm_provider="openai",
+                model_name="gpt-5.4-mini",
+                temperature=0.3,
+            )
+            get_llm(settings)
+
+        mock_chat_openai.assert_called_once_with(
+            model="gpt-5.4-mini",
+            temperature=0.3,
+        )
+
+    def test_anthropic_provider_branch(self) -> None:
+        mock_chat_anthropic = MagicMock(name="ChatAnthropic")
+        fake_module = types.SimpleNamespace(ChatAnthropic=mock_chat_anthropic)
+
+        with patch.dict("sys.modules", {"langchain_anthropic": fake_module}):
+            settings = Settings(
+                llm_provider="anthropic",
+                model_name="claude-haiku-4-5-20251001",
+                temperature=0.1,
+            )
+            get_llm(settings)
+
+        mock_chat_anthropic.assert_called_once_with(
+            model="claude-haiku-4-5-20251001",
+            temperature=0.1,
+        )
+
+    def test_ollama_provider_branch(self) -> None:
+        mock_chat_ollama = MagicMock(name="ChatOllama")
+        fake_module = types.SimpleNamespace(ChatOllama=mock_chat_ollama)
+
+        with patch.dict("sys.modules", {"langchain_ollama": fake_module}):
+            settings = Settings(
+                llm_provider="ollama",
+                model_name="qwen2.5-coder:14b",
+                temperature=0.2,
+                ollama_base_url="http://127.0.0.1:11434",
+            )
+            get_llm(settings)
+
+        mock_chat_ollama.assert_called_once_with(
+            model="qwen2.5-coder:14b",
+            temperature=0.2,
+            base_url="http://127.0.0.1:11434",
+        )
 
 
 # ---------------------------------------------------------------------------

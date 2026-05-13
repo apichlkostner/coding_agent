@@ -5,7 +5,7 @@ A LangGraph ReAct (Reasoning + Acting) AI agent specialised for coding tasks. Th
 ## Features
 
 - **ReAct loop** built with LangGraph `StateGraph`
-- **Multi-provider** support: OpenAI (default `gpt-5.4-nano`) and Anthropic (default `claude-haiku-4-5`)
+- **Multi-provider** support: OpenAI (default `gpt-5.4-nano`), Anthropic (default `claude-haiku-4-5`), and Ollama local models (default `qwen2.5-coder:14b`)
 - **Built-in tools**: safe arithmetic evaluator, current UTC datetime
 - **Filesystem tools**: read, write, list, create directory, replace-in-file, grep
 - **Shell tool**: run arbitrary bash commands (see [Security](#security))
@@ -33,7 +33,10 @@ uv sync --all-groups
 cp .env.example .env
 ```
 
-Edit `.env` and set at least one of `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
+Edit `.env` and configure your provider:
+- OpenAI: set `OPENAI_API_KEY`
+- Anthropic: set `ANTHROPIC_API_KEY`
+- Ollama: set `LLM_PROVIDER=ollama` and ensure Ollama is running (default `OLLAMA_BASE_URL=http://localhost:11434`)
 
 ## Configuration
 
@@ -41,10 +44,11 @@ All settings are loaded from environment variables (`.env` is read automatically
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_PROVIDER` | `openai` | `"openai"` or `"anthropic"` |
+| `LLM_PROVIDER` | `openai` | `"openai"`, `"anthropic"`, or `"ollama"` |
 | `OPENAI_API_KEY` | — | Required for OpenAI |
 | `ANTHROPIC_API_KEY` | — | Required for Anthropic |
-| `MODEL_NAME` | _(provider default)_ | Override model (e.g. `gpt-5.4-mini`) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for Ollama server (used when `LLM_PROVIDER=ollama`) |
+| `MODEL_NAME` | _(provider default)_ | Override model (e.g. `gpt-5.4-mini` or `qwen2.5-coder:14b`) |
 | `TEMPERATURE` | `0` | LLM sampling temperature |
 | `ENABLED_ADAPTERS` | `terminal,discord,heartbeat` | Comma-separated adapters to start; unset = all three; `""` = none |
 | `DISCORD_BOT_TOKEN` | — | Discord bot token; adapter skipped if absent |
@@ -60,6 +64,17 @@ All settings are loaded from environment variables (`.env` is read automatically
 ## Usage
 
 ### Start the agent
+
+#### Example: run with a local Ollama model
+
+```ini
+# .env
+LLM_PROVIDER=ollama
+MODEL_NAME=qwen2.5-coder:14b
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+> **Note:** Tool-calling reliability varies between local models. Prefer instruction-tuned/chat models with strong tool-use support.
 
 ```bash
 uv run agent

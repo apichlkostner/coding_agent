@@ -23,11 +23,18 @@
       "type": "bind"
     }
   ],
+  "runArgs": [
+        "--add-host=host.docker.internal:host-gateway"
+  ],
 
   // Post-create: install all Python dependencies (including dev group).
   // uv reads pyproject.toml and writes a .venv inside the workspace.
   // ---------------------------------------------------------------------------
   "postCreateCommand": "uv sync --all-groups",
+
+  "remoteEnv": {
+    "OLLAMA_BASE_URL": "http://host.docker.internal:11434"
+  },
 
   // ---------------------------------------------------------------------------
   // VS Code extensions installed automatically inside the container.
