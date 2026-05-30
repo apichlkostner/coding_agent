@@ -9,10 +9,19 @@ dependencies = [
     "langchain-core>=0.3",
     "langchain-openai>=0.2",
     "langchain-anthropic>=0.3",
+    "langchain-ollama>=0.2",
     "python-dotenv>=1.0",
     "typing-extensions>=4.12",
     "discord-py>=2.7.1",
     "prompt-toolkit>=3.0.52",
+    "tree-sitter>=0.23",
+    "tree-sitter-python>=0.25.0",
+    "tree-sitter-javascript>=0.25.0",
+    "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-rust>=0.24.2",
+    "tree-sitter-go>=0.25.0",
+    "tree-sitter-c>=0.24.2",
+    "tree-sitter-cpp>=0.23.4",
 ]
 
 [project.scripts]
