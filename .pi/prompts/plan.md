@@ -22,6 +22,7 @@ $ARGUMENTS
 3. Break the work into discrete, ordered steps that can each be implemented and verified independently.
 4. For each step, specify: what changes, in which file, and why.
 5. Identify any ambiguities, design decisions, or missing information that require clarification before work can begin.
+6. Create steps as vertical layers that can be implemented as end-to-end feature including tests
 
 ## Output
 
