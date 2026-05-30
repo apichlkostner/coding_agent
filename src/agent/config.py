@@ -46,7 +46,21 @@ class HeartbeatSettings:
     output_channel_id: str = field(default="")
     """Adapter-specific destination for forwarded responses (e.g. a Discord channel ID)."""
 
-_ALL_ADAPTERS: frozenset[str] = frozenset({"terminal", "discord", "heartbeat"})
+_ALL_ADAPTERS: frozenset[str] = frozenset({"terminal", "discord", "heartbeat", "matrix"})
+
+
+@dataclass(frozen=True)
+class MatrixSettings:
+    """Configuration for the :class:`~agent.adapters.matrix_adapter.MatrixAdapter`."""
+
+    homeserver_url: str = field(default="")
+    """Base URL of the Matrix homeserver (e.g. ``https://matrix.org``)."""
+
+    access_token: str = field(default="")
+    """Bot access token obtained from the homeserver."""
+
+    user_id: str = field(default="")
+    """Fully-qualified Matrix user ID of the bot (e.g. ``@bot:matrix.org``)."""
 
 
 @dataclass(frozen=True)
@@ -59,6 +73,7 @@ class Settings:
     discord_token: str = field(default="")
     ollama_base_url: str = field(default="http://localhost:11434")
     heartbeat: HeartbeatSettings = field(default_factory=HeartbeatSettings)
+    matrix: MatrixSettings = field(default_factory=MatrixSettings)
     enabled_adapters: frozenset[str] = field(
         default_factory=lambda: frozenset({"terminal", "discord", "heartbeat"})
     )
@@ -85,6 +100,11 @@ def get_settings() -> Settings:
         output_adapter_id=os.getenv("HEARTBEAT_OUTPUT_ADAPTER", ""),
         output_channel_id=os.getenv("HEARTBEAT_OUTPUT_CHANNEL", ""),
     )
+    matrix = MatrixSettings(
+        homeserver_url=os.getenv("MATRIX_HOMESERVER_URL", ""),
+        access_token=os.getenv("MATRIX_ACCESS_TOKEN", ""),
+        user_id=os.getenv("MATRIX_USER_ID", ""),
+    )
     raw_enabled = os.environ.get("ENABLED_ADAPTERS")
     enabled_adapters: frozenset[str] = (
         frozenset({"terminal", "discord", "heartbeat"})
@@ -98,6 +118,7 @@ def get_settings() -> Settings:
         discord_token=discord_token,
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         heartbeat=heartbeat,
+        matrix=matrix,
         enabled_adapters=enabled_adapters,
     )
 

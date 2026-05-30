@@ -276,6 +276,37 @@ class TestAgentService:
         # 200 chars of content + ellipsis
         assert results[0].content == "x" * 200 + "…"
 
+    async def test_inbound_metadata_forwarded_to_all_outbound(self) -> None:
+        """Arbitrary inbound metadata keys must appear on every outbound message."""
+        import dataclasses
+
+        graph = _make_graph(
+            {"agent": {"messages": [AIMessage(content="reply")]}},
+        )
+        service = AgentService(graph)
+        inbound = dataclasses.replace(_inbound(), metadata={"event_id": "evt-42", "room_name": "#test"})
+        results = [msg async for msg in service.run(inbound)]
+
+        assert len(results) == 1
+        assert results[0].metadata["event_id"] == "evt-42"
+        assert results[0].metadata["room_name"] == "#test"
+        # Core keys must still be set correctly.
+        assert results[0].metadata["msg_type"] == "response"
+
+    async def test_inbound_metadata_does_not_override_msg_type(self) -> None:
+        """msg_type and node_name from AgentService take precedence over inbound metadata."""
+        import dataclasses
+
+        graph = _make_graph(
+            {"agent": {"messages": [AIMessage(content="reply")]}},
+        )
+        service = AgentService(graph)
+        # Inbound metadata tries to set msg_type; AgentService must override it.
+        inbound = dataclasses.replace(_inbound(), metadata={"msg_type": "tool_call"})
+        results = [msg async for msg in service.run(inbound)]
+
+        assert results[0].metadata["msg_type"] == "response"
+
 
 # ---------------------------------------------------------------------------
 # MessageRouter

@@ -55,11 +55,12 @@ class AgentService:
         config = {"configurable": {"thread_id": message.thread_id}}
 
         def _make(content: str, msg_type: str, node_name: str = "") -> OutboundMessage:
+            meta = {**message.metadata, "msg_type": msg_type, "node_name": node_name}
             return OutboundMessage(
                 adapter_id=message.adapter_id,
                 reply_channel_id=message.reply_channel_id,
                 content=content,
-                metadata={"msg_type": msg_type, "node_name": node_name},
+                metadata=meta,
             )
 
         try:

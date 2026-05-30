@@ -16,8 +16,8 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from agent.__main__ import build_router
-from agent.adapters import DiscordAdapter, HeartbeatAdapter, TerminalAdapter
-from agent.config import HeartbeatSettings, Settings, get_settings
+from agent.adapters import DiscordAdapter, HeartbeatAdapter, MatrixAdapter, TerminalAdapter
+from agent.config import HeartbeatSettings, MatrixSettings, Settings, get_settings
 from agent.router import AgentService, InboundMessage, MessageRouter
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import OutboundMessage
@@ -48,6 +48,7 @@ def _settings(**kwargs: Any) -> Settings:
         "enabled_adapters": frozenset(),
         "discord_token": "",
         "heartbeat": HeartbeatSettings(),
+        "matrix": MatrixSettings(),
     }
     defaults.update(kwargs)
     return Settings(**defaults)
@@ -377,3 +378,86 @@ class TestIntegration:
 
         responses = [m for m in adapter.received if m.msg_type == "response"]
         assert responses[0].content == "Router integration answer."
+
+
+# ===========================================================================
+# build_router — Matrix adapter
+# ===========================================================================
+
+
+class TestBuildRouterMatrix:
+    def _matrix_settings(self, **kwargs: Any) -> Settings:
+        matrix = MatrixSettings(
+            homeserver_url="https://matrix.example.com",
+            access_token="syt_fake",
+            user_id="@bot:example.com",
+        )
+        return _settings(
+            enabled_adapters=frozenset({"matrix"}),
+            matrix=matrix,
+            **kwargs,
+        )
+
+    def test_registers_matrix_with_full_credentials(self) -> None:
+        settings = self._matrix_settings()
+        router = build_router(settings, graph=_mock_graph())
+        assert "matrix" in router._adapters
+        assert isinstance(router._adapters["matrix"], MatrixAdapter)
+
+    def test_matrix_adapter_has_correct_settings(self) -> None:
+        settings = self._matrix_settings()
+        router = build_router(settings, graph=_mock_graph())
+        adapter = router._adapters["matrix"]
+        assert isinstance(adapter, MatrixAdapter)
+        assert adapter._settings.homeserver_url == "https://matrix.example.com"
+        assert adapter._settings.user_id == "@bot:example.com"
+
+    def test_skips_matrix_when_homeserver_url_missing(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        settings = _settings(
+            enabled_adapters=frozenset({"matrix"}),
+            matrix=MatrixSettings(homeserver_url="", access_token="tok", user_id="@bot:x.org"),
+        )
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="agent.__main__"):
+            router = build_router(settings, graph=_mock_graph())
+        assert "matrix" not in router._adapters
+        assert any("MATRIX_HOMESERVER_URL" in r.message for r in caplog.records)
+
+    def test_skips_matrix_when_access_token_missing(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        settings = _settings(
+            enabled_adapters=frozenset({"matrix"}),
+            matrix=MatrixSettings(homeserver_url="https://x.org", access_token="", user_id="@bot:x.org"),
+        )
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="agent.__main__"):
+            router = build_router(settings, graph=_mock_graph())
+        assert "matrix" not in router._adapters
+
+    def test_skips_matrix_when_user_id_missing(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        settings = _settings(
+            enabled_adapters=frozenset({"matrix"}),
+            matrix=MatrixSettings(homeserver_url="https://x.org", access_token="tok", user_id=""),
+        )
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="agent.__main__"):
+            router = build_router(settings, graph=_mock_graph())
+        assert "matrix" not in router._adapters
+
+    def test_matrix_not_registered_when_not_in_enabled(self) -> None:
+        settings = _settings(
+            enabled_adapters=frozenset({"terminal"}),
+            matrix=MatrixSettings(
+                homeserver_url="https://x.org", access_token="tok", user_id="@bot:x.org"
+            ),
+        )
+        router = build_router(settings, graph=_mock_graph())
+        assert "matrix" not in router._adapters

@@ -15,7 +15,7 @@ import pytest
 from agent.adapters.discord_adapter import DiscordAdapter, _DiscordClient
 from agent.adapters.heartbeat_adapter import HeartbeatAdapter
 from agent.adapters.terminal_adapter import TerminalAdapter
-from agent.config import HeartbeatSettings, get_settings
+from agent.config import HeartbeatSettings, MatrixSettings, get_settings
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
 
@@ -99,6 +99,61 @@ class TestHeartbeatSettings:
 
 
 # ===========================================================================
+# MatrixSettings
+# ===========================================================================
+
+
+class TestMatrixSettings:
+    def test_defaults(self) -> None:
+        s = MatrixSettings()
+        assert s.homeserver_url == ""
+        assert s.access_token == ""
+        assert s.user_id == ""
+
+    def test_custom_values(self) -> None:
+        s = MatrixSettings(
+            homeserver_url="https://matrix.org",
+            access_token="tok-abc",
+            user_id="@bot:matrix.org",
+        )
+        assert s.homeserver_url == "https://matrix.org"
+        assert s.access_token == "tok-abc"
+        assert s.user_id == "@bot:matrix.org"
+
+    def test_settings_includes_matrix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        s = get_settings()
+        assert isinstance(s.matrix, MatrixSettings)
+
+    def test_matrix_homeserver_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("MATRIX_HOMESERVER_URL", "https://example.com")
+        s = get_settings()
+        assert s.matrix.homeserver_url == "https://example.com"
+
+    def test_matrix_access_token_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "syt_abc")
+        s = get_settings()
+        assert s.matrix.access_token == "syt_abc"
+
+    def test_matrix_user_id_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("MATRIX_USER_ID", "@bot:example.com")
+        s = get_settings()
+        assert s.matrix.user_id == "@bot:example.com"
+
+    def test_matrix_defaults_to_empty_when_env_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.delenv("MATRIX_HOMESERVER_URL", raising=False)
+        monkeypatch.delenv("MATRIX_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("MATRIX_USER_ID", raising=False)
+        s = get_settings()
+        assert s.matrix.homeserver_url == ""
+        assert s.matrix.access_token == ""
+        assert s.matrix.user_id == ""
 # TerminalAdapter
 # ===========================================================================
 
@@ -877,3 +932,251 @@ class TestHeartbeatSettingsForwarding:
         s = get_settings()
         assert s.heartbeat.output_adapter_id == "discord"
         assert s.heartbeat.output_channel_id == "123456789"
+
+
+# ===========================================================================
+# MatrixAdapter
+# ===========================================================================
+
+
+def _matrix_outbound(
+    content: str = "hello",
+    msg_type: str = "response",
+    reply_channel_id: str = "!room:matrix.org",
+    event_id: str | None = "evt-001",
+) -> OutboundMessage:
+    meta: dict = {"msg_type": msg_type}
+    if event_id is not None:
+        meta["event_id"] = event_id
+    return OutboundMessage(
+        adapter_id="matrix",
+        reply_channel_id=reply_channel_id,
+        content=content,
+        metadata=meta,
+    )
+
+
+def _make_matrix_adapter() -> "MatrixAdapter":
+    from agent.adapters.matrix_adapter import MatrixAdapter
+    from agent.config import MatrixSettings
+
+    settings = MatrixSettings(
+        homeserver_url="https://matrix.example.com",
+        access_token="syt_fake",
+        user_id="@bot:example.com",
+    )
+    adapter = MatrixAdapter(settings)
+    # Replace the nio client with a mock so no real network calls are made.
+    adapter._client = AsyncMock()
+    return adapter
+
+
+class TestMatrixAdapterSend:
+    async def test_send_response_calls_room_send(self) -> None:
+        adapter = _make_matrix_adapter()
+        adapter._client.room_send = AsyncMock(return_value=MagicMock(spec=[]))
+        await adapter.send(_matrix_outbound(content="Hello Matrix!", msg_type="response"))
+        adapter._client.room_send.assert_awaited_once()
+        call_kwargs = adapter._client.room_send.call_args
+        assert call_kwargs.kwargs["room_id"] == "!room:matrix.org"
+        assert call_kwargs.kwargs["content"]["body"] == "Hello Matrix!"
+        assert call_kwargs.kwargs["content"]["msgtype"] == "m.text"
+
+    async def test_send_error_calls_room_send(self) -> None:
+        adapter = _make_matrix_adapter()
+        adapter._client.room_send = AsyncMock(return_value=MagicMock(spec=[]))
+        await adapter.send(_matrix_outbound(content="Something went wrong", msg_type="error"))
+        adapter._client.room_send.assert_awaited_once()
+
+    async def test_send_tool_call_is_dropped(self) -> None:
+        adapter = _make_matrix_adapter()
+        adapter._client.room_send = AsyncMock()
+        await adapter.send(_matrix_outbound(msg_type="tool_call"))
+        adapter._client.room_send.assert_not_awaited()
+
+    async def test_send_tool_result_is_dropped(self) -> None:
+        adapter = _make_matrix_adapter()
+        adapter._client.room_send = AsyncMock()
+        await adapter.send(_matrix_outbound(msg_type="tool_result"))
+        adapter._client.room_send.assert_not_awaited()
+
+    async def test_send_empty_content_is_dropped(self) -> None:
+        adapter = _make_matrix_adapter()
+        adapter._client.room_send = AsyncMock()
+        await adapter.send(_matrix_outbound(content="", msg_type="response"))
+        adapter._client.room_send.assert_not_awaited()
+
+    async def test_send_includes_in_reply_to_when_event_id_present(self) -> None:
+        adapter = _make_matrix_adapter()
+        adapter._client.room_send = AsyncMock(return_value=MagicMock(spec=[]))
+        await adapter.send(_matrix_outbound(event_id="$evt123"))
+        content = adapter._client.room_send.call_args.kwargs["content"]
+        assert content["m.relates_to"] == {"m.in_reply_to": {"event_id": "$evt123"}}
+
+    async def test_send_omits_in_reply_to_when_no_event_id(self) -> None:
+        adapter = _make_matrix_adapter()
+        adapter._client.room_send = AsyncMock(return_value=MagicMock(spec=[]))
+        await adapter.send(_matrix_outbound(event_id=None))
+        content = adapter._client.room_send.call_args.kwargs["content"]
+        assert "m.relates_to" not in content
+
+    async def test_send_logs_error_on_room_send_error(
+        self, caplog: pytest.CaptureFixture
+    ) -> None:
+        import logging
+
+        import nio
+
+        adapter = _make_matrix_adapter()
+        error_response = MagicMock(spec=nio.RoomSendError)
+        adapter._client.room_send = AsyncMock(return_value=error_response)
+
+        with caplog.at_level(logging.ERROR, logger="agent.adapters.matrix_adapter"):
+            await adapter.send(_matrix_outbound())  # must not raise
+
+        assert any("room_send failed" in r.message for r in caplog.records)
+
+
+class TestMatrixAdapterStart:
+    def _make_nio_event(
+        self,
+        sender: str = "@user:matrix.org",
+        body: str = "Hello!",
+        event_id: str = "$evt001",
+    ) -> "nio.RoomMessageText":
+        import nio
+
+        source = {
+            "event_id": event_id,
+            "sender": sender,
+            "origin_server_ts": 1000,
+            "type": "m.room.message",
+            "content": {"msgtype": "m.text", "body": body},
+            "room_id": "!room:matrix.org",
+        }
+        return nio.RoomMessageText.from_dict(source)  # type: ignore[attr-defined]
+
+    def _make_nio_room(
+        self,
+        room_id: str = "!room:matrix.org",
+        name: str = "Test Room",
+    ) -> "nio.MatrixRoom":
+        import nio
+
+        room = nio.MatrixRoom(room_id=room_id, own_user_id="@bot:example.com")
+        room.name = name
+        return room
+
+    async def test_own_messages_are_not_dispatched(self) -> None:
+        adapter = _make_matrix_adapter()
+        router, captured = _mock_router_with_dispatch()
+
+        # Trigger the callback manually with bot's own sender.
+        event = self._make_nio_event(sender="@bot:example.com")
+        room = self._make_nio_room()
+
+        # Extract callback by patching add_event_callback to capture it.
+        captured_cb: list = []
+        adapter._client.add_event_callback = MagicMock(
+            side_effect=lambda cb, _: captured_cb.append(cb)
+        )
+        adapter._client.sync = AsyncMock(side_effect=asyncio.CancelledError())
+
+        with pytest.raises(asyncio.CancelledError):
+            await adapter.start(router)
+
+        assert len(captured_cb) == 1
+        await captured_cb[0](room, event)
+        assert len(captured) == 0
+
+    async def test_valid_message_builds_correct_inbound(self) -> None:
+        adapter = _make_matrix_adapter()
+        router, captured = _mock_router_with_dispatch()
+
+        event = self._make_nio_event(
+            sender="@alice:matrix.org",
+            body="What is the answer?",
+            event_id="$evt-abc",
+        )
+        room = self._make_nio_room(
+            room_id="!general:matrix.org",
+            name="General",
+        )
+
+        captured_cb: list = []
+        adapter._client.add_event_callback = MagicMock(
+            side_effect=lambda cb, _: captured_cb.append(cb)
+        )
+        adapter._client.sync = AsyncMock(side_effect=asyncio.CancelledError())
+
+        with pytest.raises(asyncio.CancelledError):
+            await adapter.start(router)
+
+        await captured_cb[0](room, event)
+
+        assert len(captured) == 1
+        inbound = captured[0]
+        assert inbound.adapter_id == "matrix"
+        assert inbound.thread_id == "matrix-!general:matrix.org-@alice:matrix.org"
+        assert inbound.content == "What is the answer?"
+        assert inbound.reply_channel_id == "!general:matrix.org"
+        assert inbound.user_id == "@alice:matrix.org"
+        assert inbound.metadata["event_id"] == "$evt-abc"
+        assert inbound.metadata["room_name"] == "General"
+
+    async def test_sync_error_triggers_backoff(self) -> None:
+        adapter = _make_matrix_adapter()
+        router, _ = _mock_router_with_dispatch()
+
+        adapter._client.add_event_callback = MagicMock()
+        call_count = 0
+
+        async def fail_twice(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                raise ConnectionError("timeout")
+            raise asyncio.CancelledError()
+
+        adapter._client.sync = fail_twice
+        sleep_calls: list[float] = []
+
+        async def mock_sleep(delay: float) -> None:
+            sleep_calls.append(delay)
+
+        with patch("agent.adapters.matrix_adapter.asyncio.sleep", new=mock_sleep):
+            with pytest.raises(asyncio.CancelledError):
+                await adapter.start(router)
+
+        assert len(sleep_calls) == 2
+        # Second backoff must be >= first (exponential).
+        assert sleep_calls[1] >= sleep_calls[0]
+
+    async def test_next_batch_token_passed_on_subsequent_sync(self) -> None:
+        """next_batch from SyncResponse must be passed as since= on the next call."""
+        import nio
+
+        adapter = _make_matrix_adapter()
+        router, _ = _mock_router_with_dispatch()
+        adapter._client.add_event_callback = MagicMock()
+
+        sync_calls: list[dict] = []
+
+        async def fake_sync(*args, **kwargs):  # type: ignore[no-untyped-def]
+            sync_calls.append(kwargs)
+            if len(sync_calls) == 1:
+                resp = MagicMock(spec=nio.SyncResponse)
+                resp.next_batch = "tok_001"
+                return resp
+            raise asyncio.CancelledError()
+
+        adapter._client.sync = fake_sync
+
+        with pytest.raises(asyncio.CancelledError):
+            await adapter.start(router)
+
+        assert len(sync_calls) == 2
+        # First call: no since token.
+        assert sync_calls[0].get("since") is None
+        # Second call: token from first response.
+        assert sync_calls[1].get("since") == "tok_001"

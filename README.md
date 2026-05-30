@@ -50,12 +50,15 @@ All settings are loaded from environment variables (`.env` is read automatically
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for Ollama server (used when `LLM_PROVIDER=ollama`) |
 | `MODEL_NAME` | _(provider default)_ | Override model (e.g. `gpt-5.4-mini` or `qwen2.5-coder:14b`) |
 | `TEMPERATURE` | `0` | LLM sampling temperature |
-| `ENABLED_ADAPTERS` | `terminal,discord,heartbeat` | Comma-separated adapters to start; unset = all three; `""` = none |
+| `ENABLED_ADAPTERS` | `terminal,discord,heartbeat` | Comma-separated adapters to start; unset = all three built-in; `""` = none. Add `matrix` to enable the Matrix adapter. |
 | `DISCORD_BOT_TOKEN` | — | Discord bot token; adapter skipped if absent |
 | `HEARTBEAT_INTERVAL_SECONDS` | `600` | Seconds between heartbeat runs |
 | `HEARTBEAT_PROMPT_FILE` | `HEARTBEAT.md` | Path to the prompt file sent to the agent each tick |
 | `HEARTBEAT_OUTPUT_ADAPTER` | — | Adapter to forward heartbeat responses to (e.g. `discord`) |
 | `HEARTBEAT_OUTPUT_CHANNEL` | — | Destination within that adapter (e.g. a Discord channel ID) |
+| `MATRIX_HOMESERVER_URL` | — | Matrix homeserver base URL (e.g. `https://matrix.org`) |
+| `MATRIX_ACCESS_TOKEN` | — | Bot access token; adapter skipped if any Matrix var is absent |
+| `MATRIX_USER_ID` | — | Fully-qualified bot user ID (e.g. `@bot:matrix.org`) |
 | `TAVILY_API_KEY` | — | Enables live web search tool |
 | `LANGCHAIN_TRACING_V2` | `false` | Enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | — | LangSmith API key |
@@ -110,6 +113,31 @@ See [Security](#security) for details.
 
 Each user × channel combination gets its own persistent conversation thread (thread ID: `discord-{user_id}-{channel_id}`).
 
+### Matrix
+
+1. Create a bot account on your homeserver (via the homeserver's registration page or admin API).
+2. Obtain an access token:
+   ```bash
+   curl -XPOST 'https://<homeserver>/_matrix/client/v3/login' \
+        -H 'Content-Type: application/json' \
+        -d '{"type":"m.login.password","user":"<username>","password":"<password>"}'
+   ```
+   Copy the `access_token` from the response.
+3. Set the three env vars in `.env`:
+   ```ini
+   MATRIX_HOMESERVER_URL=https://<homeserver>
+   MATRIX_ACCESS_TOKEN=<token from step 2>
+   MATRIX_USER_ID=@<username>:<homeserver>
+   ```
+4. Add `matrix` to `ENABLED_ADAPTERS`:
+   ```ini
+   ENABLED_ADAPTERS=terminal,discord,heartbeat,matrix
+   ```
+5. Add the bot to rooms manually using an admin account or Element. The bot does **not** auto-accept invitations.
+6. Start the agent — the bot will respond to every text message in all joined rooms.
+
+Each user × room combination gets its own persistent conversation thread (thread ID: `matrix-{room_id}-{sender_id}`). Replies are threaded using Matrix’s `m.in_reply_to` so conversations stay readable in shared rooms.
+
 ### Heartbeat
 
 The heartbeat runs the agent on a schedule without any human input. Create a `HEARTBEAT.md` in the project root:
@@ -158,7 +186,8 @@ src/agent/
 └── adapters/                # Channel implementations
     ├── terminal_adapter.py  # Interactive REPL over stdin/stdout
     ├── discord_adapter.py   # discord.py bot
-    └── heartbeat_adapter.py # Periodic scheduled runs
+    ├── heartbeat_adapter.py # Periodic scheduled runs
+    └── matrix_adapter.py   # matrix-nio bot
 
 tests/
 ├── test_agent.py            # Tools, config, graph structure tests
@@ -178,12 +207,12 @@ examples/
                          │   build_router(settings) │
                          └────────────┬────────────┘
                                       │ registers
-          ┌───────────────────────────┼───────────────────────────┐
-          │                           │                           │
-   TerminalAdapter            DiscordAdapter             HeartbeatAdapter
-   (stdin/stdout REPL)        (discord.py bot)           (scheduled trigger)
-          │                           │                           │
-          └───────────────────────────┼───────────────────────────┘
+          ┌───────────────────────────┼───────────────────────────┬──────────────────┐
+          │                           │                           │                  │
+   TerminalAdapter            DiscordAdapter             HeartbeatAdapter    MatrixAdapter
+   (stdin/stdout REPL)        (discord.py bot)           (scheduled trigger) (matrix-nio bot)
+          │                           │                           │                  │
+          └───────────────────────────┼───────────────────────────┴──────────────────┘
                                       │ InboundMessage
                          ┌────────────▼────────────┐
                          │      MessageRouter       │
