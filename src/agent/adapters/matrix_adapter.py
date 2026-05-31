@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 
 import nio
@@ -50,8 +51,20 @@ class MatrixAdapter(BaseAdapter):
 
     def __init__(self, settings: MatrixSettings) -> None:
         self._settings = settings
-        self._client = nio.AsyncClient(settings.homeserver_url, settings.user_id)
+        client_config = nio.AsyncClientConfig(store_sync_tokens=True)
+        self._client = nio.AsyncClient(
+            settings.homeserver_url,
+            settings.user_id,
+            device_id=settings.device_id,
+            store_path=settings.store_path,
+            config=client_config,
+        )
+        self._client.user_id = settings.user_id
         self._client.access_token = settings.access_token
+        self._client.device_id = settings.device_id
+        if settings.store_path:
+            os.makedirs(settings.store_path, exist_ok=True)
+            self._client.load_store()
         self._router: MessageRouter | None = None
 
     # ------------------------------------------------------------------
@@ -80,32 +93,52 @@ class MatrixAdapter(BaseAdapter):
             )
             await router.dispatch(inbound)  # fire-and-forget
 
-        self._client.add_event_callback(_on_message, nio.RoomMessageText)
+        async def _on_decryption_failure(
+            room: nio.MatrixRoom, event: nio.MegolmEvent
+        ) -> None:
+            logger.warning(
+                "MatrixAdapter could not decrypt message in room %s from %s",
+                room.room_id,
+                event.sender,
+            )
 
         attempt = 0
         next_batch: str | None = None
+        callbacks_registered = False
         while True:
             try:
-                response = await self._client.sync(
-                    timeout=30_000,
-                    full_state=False,
-                    since=next_batch,
-                )
-                if isinstance(response, nio.SyncResponse):
+                if next_batch is None:
+                    response = await self._client.sync(
+                        timeout=0,
+                        full_state=True,
+                        since=None,
+                    )
+                    if not isinstance(response, nio.SyncResponse):
+                        raise RuntimeError(f"Sync failed: {response}")
                     next_batch = response.next_batch
-                    attempt = 0
-                else:
-                    # SyncError — treat as a transient failure.
-                    raise RuntimeError(f"Sync failed: {response}")
+
+                if not callbacks_registered:
+                    self._client.add_event_callback(_on_message, nio.RoomMessageText)
+                    self._client.add_event_callback(
+                        _on_decryption_failure, nio.MegolmEvent
+                    )
+                    callbacks_registered = True
+
+                await self._client.sync_forever(timeout=30_000, since=next_batch)
             except asyncio.CancelledError:
+                self._client.stop_sync_forever()
                 raise
             except Exception as exc:
+                next_batch = self._client.next_batch or next_batch
                 backoff = min(2**attempt + random.uniform(0, 1), 60.0)
                 logger.error(
                     "MatrixAdapter sync error (retry in %.1fs): %s", backoff, exc
                 )
                 await asyncio.sleep(backoff)
                 attempt += 1
+            else:
+                attempt = 0
+                next_batch = None
 
     async def send(self, message: OutboundMessage) -> None:
         """Deliver *message* to the Matrix room identified by ``reply_channel_id``.
@@ -131,6 +164,7 @@ class MatrixAdapter(BaseAdapter):
             room_id=message.reply_channel_id,
             message_type="m.room.message",
             content=content,
+            ignore_unverified_devices=self._settings.ignore_unverified_devices,
         )
         if isinstance(response, nio.RoomSendError):
             logger.error(

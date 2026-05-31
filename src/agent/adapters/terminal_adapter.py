@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
@@ -40,15 +41,30 @@ class TerminalAdapter(BaseAdapter):
     adapter_id = "terminal"
 
     def __init__(self) -> None:
-        self._session: PromptSession[str] = PromptSession(history=InMemoryHistory())
+        self._session: PromptSession[str] | None = None
+
+    def _interactive_stdio_available(self) -> bool:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+
+    def _get_session(self) -> PromptSession[str]:
+        if self._session is None:
+            self._session = PromptSession(history=InMemoryHistory())
+        return self._session
 
     async def start(self, router: MessageRouter) -> None:
         """Run the REPL until the user quits or EOF is reached."""
+        if self._session is None and not self._interactive_stdio_available():
+            logger.warning(
+                "TerminalAdapter requires interactive stdin/stdout; skipping terminal REPL."
+            )
+            return
+
+        session = self._get_session()
         print("Agent ready  (type 'quit' or Ctrl-D to exit)\n")
 
         while True:
             try:
-                user_input = (await self._session.prompt_async("You: ")).strip()
+                user_input = (await session.prompt_async("You: ")).strip()
             except EOFError:
                 print("\nGoodbye.")
                 return

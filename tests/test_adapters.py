@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import nio
 import pytest
 
 from agent.adapters.discord_adapter import DiscordAdapter, _DiscordClient
@@ -18,6 +19,9 @@ from agent.adapters.terminal_adapter import TerminalAdapter
 from agent.config import HeartbeatSettings, MatrixSettings, get_settings
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
+
+if TYPE_CHECKING:
+    from agent.adapters.matrix_adapter import MatrixAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +95,9 @@ class TestHeartbeatSettings:
         s = get_settings()
         assert s.heartbeat.interval_seconds == 120
 
-    def test_heartbeat_prompt_file_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_heartbeat_prompt_file_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "openai")
         monkeypatch.setenv("HEARTBEAT_PROMPT_FILE", "MY_BEAT.md")
         s = get_settings()
@@ -109,16 +115,25 @@ class TestMatrixSettings:
         assert s.homeserver_url == ""
         assert s.access_token == ""
         assert s.user_id == ""
+        assert s.device_id == ""
+        assert s.store_path == ""
+        assert s.ignore_unverified_devices is True
 
     def test_custom_values(self) -> None:
         s = MatrixSettings(
             homeserver_url="https://matrix.org",
             access_token="tok-abc",
             user_id="@bot:matrix.org",
+            device_id="DEVICE123",
+            store_path="./nio_store",
+            ignore_unverified_devices=False,
         )
         assert s.homeserver_url == "https://matrix.org"
         assert s.access_token == "tok-abc"
         assert s.user_id == "@bot:matrix.org"
+        assert s.device_id == "DEVICE123"
+        assert s.store_path == "./nio_store"
+        assert s.ignore_unverified_devices is False
 
     def test_settings_includes_matrix(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "openai")
@@ -131,7 +146,9 @@ class TestMatrixSettings:
         s = get_settings()
         assert s.matrix.homeserver_url == "https://example.com"
 
-    def test_matrix_access_token_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_matrix_access_token_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "openai")
         monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "syt_abc")
         s = get_settings()
@@ -143,6 +160,26 @@ class TestMatrixSettings:
         s = get_settings()
         assert s.matrix.user_id == "@bot:example.com"
 
+    def test_matrix_device_id_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("MATRIX_DEVICE_ID", "DEV123")
+        s = get_settings()
+        assert s.matrix.device_id == "DEV123"
+
+    def test_matrix_store_path_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("MATRIX_STORE_PATH", "./nio_store")
+        s = get_settings()
+        assert s.matrix.store_path == "./nio_store"
+
+    def test_matrix_ignore_unverified_devices_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("MATRIX_IGNORE_UNVERIFIED_DEVICES", "false")
+        s = get_settings()
+        assert s.matrix.ignore_unverified_devices is False
+
     def test_matrix_defaults_to_empty_when_env_unset(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -150,10 +187,18 @@ class TestMatrixSettings:
         monkeypatch.delenv("MATRIX_HOMESERVER_URL", raising=False)
         monkeypatch.delenv("MATRIX_ACCESS_TOKEN", raising=False)
         monkeypatch.delenv("MATRIX_USER_ID", raising=False)
+        monkeypatch.delenv("MATRIX_DEVICE_ID", raising=False)
+        monkeypatch.delenv("MATRIX_STORE_PATH", raising=False)
+        monkeypatch.delenv("MATRIX_IGNORE_UNVERIFIED_DEVICES", raising=False)
         s = get_settings()
         assert s.matrix.homeserver_url == ""
         assert s.matrix.access_token == ""
         assert s.matrix.user_id == ""
+        assert s.matrix.device_id == ""
+        assert s.matrix.store_path == ""
+        assert s.matrix.ignore_unverified_devices is True
+
+
 # TerminalAdapter
 # ===========================================================================
 
@@ -163,14 +208,22 @@ class TestTerminalAdapterSend:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         adapter = TerminalAdapter()
-        await adapter.send(_outbound(content="Hello!", msg_type="response", node_name="agent"))
+        await adapter.send(
+            _outbound(content="Hello!", msg_type="response", node_name="agent")
+        )
         assert capsys.readouterr().out.strip() == "[agent] Hello!"
 
     async def test_send_tool_call_prints_arrow(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         adapter = TerminalAdapter()
-        await adapter.send(_outbound(content="calculate({'expr': '1+1'})", msg_type="tool_call", node_name="agent"))
+        await adapter.send(
+            _outbound(
+                content="calculate({'expr': '1+1'})",
+                msg_type="tool_call",
+                node_name="agent",
+            )
+        )
         out = capsys.readouterr().out
         assert "→" in out
         assert "calculate" in out
@@ -179,7 +232,9 @@ class TestTerminalAdapterSend:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         adapter = TerminalAdapter()
-        await adapter.send(_outbound(content="2", msg_type="tool_result", node_name="tools"))
+        await adapter.send(
+            _outbound(content="2", msg_type="tool_result", node_name="tools")
+        )
         out = capsys.readouterr().out
         assert "←" in out
         assert "[tools]" in out
@@ -234,6 +289,7 @@ class TestTerminalAdapterSend:
 class TestTerminalAdapterStart:
     async def test_start_dispatches_message(self) -> None:
         adapter = TerminalAdapter()
+        adapter._session = MagicMock()
         router, captured = _mock_router_with_dispatch()
 
         with patch.object(
@@ -252,6 +308,7 @@ class TestTerminalAdapterStart:
 
     async def test_start_skips_empty_input(self) -> None:
         adapter = TerminalAdapter()
+        adapter._session = MagicMock()
         router, captured = _mock_router_with_dispatch()
 
         with patch.object(
@@ -266,6 +323,7 @@ class TestTerminalAdapterStart:
 
     async def test_start_returns_on_quit_command(self) -> None:
         adapter = TerminalAdapter()
+        adapter._session = MagicMock()
         router, captured = _mock_router_with_dispatch()
 
         for cmd in ("quit", "Quit", "QUIT", "exit", "q"):
@@ -278,8 +336,11 @@ class TestTerminalAdapterStart:
                 await adapter.start(router)
             assert len(captured) == 0, f"'{cmd}' should not dispatch"
 
-    async def test_start_returns_on_eof(self, capsys: pytest.CaptureFixture[str]) -> None:
+    async def test_start_returns_on_eof(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         adapter = TerminalAdapter()
+        adapter._session = MagicMock()
         router, _ = _mock_router_with_dispatch()
 
         with patch.object(
@@ -291,10 +352,13 @@ class TestTerminalAdapterStart:
 
     async def test_start_reraises_keyboard_interrupt(self) -> None:
         adapter = TerminalAdapter()
+        adapter._session = MagicMock()
         router, _ = _mock_router_with_dispatch()
 
         with patch.object(
-            adapter._session, "prompt_async", new=AsyncMock(side_effect=KeyboardInterrupt())
+            adapter._session,
+            "prompt_async",
+            new=AsyncMock(side_effect=KeyboardInterrupt()),
         ):
             with pytest.raises(KeyboardInterrupt):
                 await adapter.start(router)
@@ -302,6 +366,7 @@ class TestTerminalAdapterStart:
     async def test_start_awaits_task_before_next_prompt(self) -> None:
         """The task must be awaited so the response is printed before the next prompt."""
         adapter = TerminalAdapter()
+        adapter._session = MagicMock()
         order: list[str] = []
 
         async def slow_dispatch(msg: InboundMessage) -> asyncio.Task[None]:
@@ -331,6 +396,25 @@ class TestTerminalAdapterStart:
 
         # prompt_1 → task_start → task_end → prompt_2
         assert order == ["prompt_1", "task_start", "task_end", "prompt_2"]
+
+    async def test_start_skips_non_interactive_stdio(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        adapter = TerminalAdapter()
+        router, captured = _mock_router_with_dispatch()
+
+        with patch.object(adapter, "_interactive_stdio_available", return_value=False):
+            with caplog.at_level(
+                logging.WARNING, logger="agent.adapters.terminal_adapter"
+            ):
+                await adapter.start(router)
+
+        assert len(captured) == 0
+        assert any(
+            "interactive stdin/stdout" in record.message for record in caplog.records
+        )
 
 
 # ===========================================================================
@@ -372,17 +456,25 @@ class TestDiscordAdapterSend:
 
     async def test_send_skips_tool_call(self) -> None:
         adapter, ch = self._adapter_with_mock_channel()
-        await adapter.send(_outbound(msg_type="tool_call", adapter_id="discord", reply_channel_id="99"))
+        await adapter.send(
+            _outbound(msg_type="tool_call", adapter_id="discord", reply_channel_id="99")
+        )
         ch.send.assert_not_awaited()
 
     async def test_send_skips_tool_result(self) -> None:
         adapter, ch = self._adapter_with_mock_channel()
-        await adapter.send(_outbound(msg_type="tool_result", adapter_id="discord", reply_channel_id="99"))
+        await adapter.send(
+            _outbound(
+                msg_type="tool_result", adapter_id="discord", reply_channel_id="99"
+            )
+        )
         ch.send.assert_not_awaited()
 
     async def test_send_skips_empty_content(self) -> None:
         adapter, ch = self._adapter_with_mock_channel()
-        msg = _outbound(content="", msg_type="response", adapter_id="discord", reply_channel_id="99")
+        msg = _outbound(
+            content="", msg_type="response", adapter_id="discord", reply_channel_id="99"
+        )
         await adapter.send(msg)
         ch.send.assert_not_awaited()
 
@@ -390,7 +482,12 @@ class TestDiscordAdapterSend:
         adapter, ch = self._adapter_with_mock_channel()
         # 4001 chars → chunks of 2000 + 2000 + 1 = 3 sends
         big = "x" * 4001
-        msg = _outbound(content=big, msg_type="response", adapter_id="discord", reply_channel_id="99")
+        msg = _outbound(
+            content=big,
+            msg_type="response",
+            adapter_id="discord",
+            reply_channel_id="99",
+        )
         await adapter.send(msg)
         assert ch.send.await_count == 3
         # First chunk is exactly 2000 chars.
@@ -403,7 +500,12 @@ class TestDiscordAdapterSend:
         adapter._client.get_channel = MagicMock(return_value=None)
         adapter._client.fetch_channel = AsyncMock(return_value=mock_channel)
 
-        msg = _outbound(content="hi", msg_type="response", adapter_id="discord", reply_channel_id="99")
+        msg = _outbound(
+            content="hi",
+            msg_type="response",
+            adapter_id="discord",
+            reply_channel_id="99",
+        )
         await adapter.send(msg)
 
         adapter._client.fetch_channel.assert_awaited_once_with(99)
@@ -418,7 +520,12 @@ class TestDiscordAdapterSend:
         adapter._client.get_channel = MagicMock(return_value=None)
         adapter._client.fetch_channel = AsyncMock(side_effect=Exception("not found"))
 
-        msg = _outbound(content="hi", msg_type="response", adapter_id="discord", reply_channel_id="99")
+        msg = _outbound(
+            content="hi",
+            msg_type="response",
+            adapter_id="discord",
+            reply_channel_id="99",
+        )
         with caplog.at_level(logging.ERROR, logger="agent.adapters.discord_adapter"):
             await adapter.send(msg)  # must not raise
 
@@ -590,7 +697,9 @@ class TestHeartbeatAdapterSend:
         import logging
 
         adapter = HeartbeatAdapter()
-        msg = _outbound(content="exit_code: 0", msg_type="tool_result", node_name="tools")
+        msg = _outbound(
+            content="exit_code: 0", msg_type="tool_result", node_name="tools"
+        )
         with caplog.at_level(logging.INFO, logger="agent.adapters.heartbeat_adapter"):
             await adapter.send(msg)
         assert any("←" in r.message for r in caplog.records)
@@ -641,9 +750,7 @@ class TestHeartbeatAdapterSend:
 
 
 class TestHeartbeatAdapterStart:
-    async def test_start_dispatches_correct_inbound(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_start_dispatches_correct_inbound(self, tmp_path: Path) -> None:
         prompt_file = tmp_path / "beat.md"
         prompt_file.write_text("Check everything.", encoding="utf-8")
 
@@ -652,7 +759,9 @@ class TestHeartbeatAdapterStart:
         )
         router, captured = _mock_router_with_dispatch()
 
-        with patch("asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())):
+        with patch(
+            "asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())
+        ):
             with pytest.raises(asyncio.CancelledError):
                 await adapter.start(router)
 
@@ -680,9 +789,7 @@ class TestHeartbeatAdapterStart:
         assert len(captured) == 0
         assert any("nonexistent_file_xyz.md" in r.message for r in caplog.records)
 
-    async def test_start_sleeps_with_configured_interval(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_start_sleeps_with_configured_interval(self, tmp_path: Path) -> None:
         prompt_file = tmp_path / "beat.md"
         prompt_file.write_text("ping", encoding="utf-8")
 
@@ -703,9 +810,7 @@ class TestHeartbeatAdapterStart:
 
         assert sleep_calls == [42]
 
-    async def test_start_runs_multiple_iterations(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_start_runs_multiple_iterations(self, tmp_path: Path) -> None:
         prompt_file = tmp_path / "beat.md"
         prompt_file.write_text("tick", encoding="utf-8")
 
@@ -744,7 +849,9 @@ class TestHeartbeatAdapterStart:
         assert adapter._router is None
 
         router, _ = _mock_router_with_dispatch()
-        with patch("asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())):
+        with patch(
+            "asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())
+        ):
             with pytest.raises(asyncio.CancelledError):
                 await adapter.start(router)
 
@@ -756,7 +863,9 @@ class TestHeartbeatAdapterStart:
 # ===========================================================================
 
 
-def _mock_router_with_forwarding() -> tuple[MagicMock, list[InboundMessage], list[OutboundMessage]]:
+def _mock_router_with_forwarding() -> tuple[
+    MagicMock, list[InboundMessage], list[OutboundMessage]
+]:
     """Router mock that records both dispatched inbound and send_to outbound messages."""
     dispatched: list[InboundMessage] = []
     forwarded: list[OutboundMessage] = []
@@ -810,7 +919,12 @@ class TestHeartbeatAdapterForwarding:
         adapter._router = router  # type: ignore[assignment]
 
         await adapter.send(
-            _outbound(content="boom", msg_type="error", adapter_id="heartbeat", reply_channel_id="log")
+            _outbound(
+                content="boom",
+                msg_type="error",
+                adapter_id="heartbeat",
+                reply_channel_id="log",
+            )
         )
 
         assert len(forwarded) == 1
@@ -827,16 +941,19 @@ class TestHeartbeatAdapterForwarding:
         adapter._router = router  # type: ignore[assignment]
 
         await adapter.send(
-            _outbound(content="bash(...)", msg_type="tool_call", adapter_id="heartbeat", reply_channel_id="log")
+            _outbound(
+                content="bash(...)",
+                msg_type="tool_call",
+                adapter_id="heartbeat",
+                reply_channel_id="log",
+            )
         )
 
         assert len(forwarded) == 1
         assert forwarded[0].msg_type == "tool_call"
 
     async def test_send_preserves_metadata_when_forwarding(self) -> None:
-        settings = HeartbeatSettings(
-            output_adapter_id="discord", output_channel_id="1"
-        )
+        settings = HeartbeatSettings(output_adapter_id="discord", output_channel_id="1")
         adapter = HeartbeatAdapter(settings)
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
@@ -856,7 +973,11 @@ class TestHeartbeatAdapterForwarding:
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
-        await adapter.send(_outbound(msg_type="response", adapter_id="heartbeat", reply_channel_id="log"))
+        await adapter.send(
+            _outbound(
+                msg_type="response", adapter_id="heartbeat", reply_channel_id="log"
+            )
+        )
 
         assert len(forwarded) == 0
 
@@ -867,7 +988,11 @@ class TestHeartbeatAdapterForwarding:
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
-        await adapter.send(_outbound(msg_type="response", adapter_id="heartbeat", reply_channel_id="log"))
+        await adapter.send(
+            _outbound(
+                msg_type="response", adapter_id="heartbeat", reply_channel_id="log"
+            )
+        )
         assert len(forwarded) == 0
 
     async def test_send_does_not_forward_when_only_channel_set(self) -> None:
@@ -876,7 +1001,11 @@ class TestHeartbeatAdapterForwarding:
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
-        await adapter.send(_outbound(msg_type="response", adapter_id="heartbeat", reply_channel_id="log"))
+        await adapter.send(
+            _outbound(
+                msg_type="response", adapter_id="heartbeat", reply_channel_id="log"
+            )
+        )
         assert len(forwarded) == 0
 
     async def test_send_logs_warning_when_router_not_set(
@@ -890,14 +1019,20 @@ class TestHeartbeatAdapterForwarding:
         adapter = HeartbeatAdapter(settings)
         # _router intentionally left as None
 
-        with caplog.at_level(logging.WARNING, logger="agent.adapters.heartbeat_adapter"):
+        with caplog.at_level(
+            logging.WARNING, logger="agent.adapters.heartbeat_adapter"
+        ):
             await adapter.send(
-                _outbound(msg_type="response", adapter_id="heartbeat", reply_channel_id="log")
+                _outbound(
+                    msg_type="response", adapter_id="heartbeat", reply_channel_id="log"
+                )
             )
 
         assert any("router" in r.message.lower() for r in caplog.records)
 
-    async def test_start_forwarding_config_logged(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    async def test_start_forwarding_config_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         import logging
 
         prompt_file = tmp_path / "beat.md"
@@ -911,7 +1046,9 @@ class TestHeartbeatAdapterForwarding:
         router, _ = _mock_router_with_dispatch()
 
         with caplog.at_level(logging.INFO, logger="agent.adapters.heartbeat_adapter"):
-            with patch("asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())):
+            with patch(
+                "asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())
+            ):
                 with pytest.raises(asyncio.CancelledError):
                     await adapter.start(router)
 
@@ -929,6 +1066,7 @@ class TestHeartbeatSettingsForwarding:
         monkeypatch.setenv("HEARTBEAT_OUTPUT_ADAPTER", "discord")
         monkeypatch.setenv("HEARTBEAT_OUTPUT_CHANNEL", "123456789")
         from agent.config import get_settings
+
         s = get_settings()
         assert s.heartbeat.output_adapter_id == "discord"
         assert s.heartbeat.output_channel_id == "123456789"
@@ -945,7 +1083,7 @@ def _matrix_outbound(
     reply_channel_id: str = "!room:matrix.org",
     event_id: str | None = "evt-001",
 ) -> OutboundMessage:
-    meta: dict = {"msg_type": msg_type}
+    meta: dict[str, str] = {"msg_type": msg_type}
     if event_id is not None:
         meta["event_id"] = event_id
     return OutboundMessage(
@@ -975,17 +1113,22 @@ class TestMatrixAdapterSend:
     async def test_send_response_calls_room_send(self) -> None:
         adapter = _make_matrix_adapter()
         adapter._client.room_send = AsyncMock(return_value=MagicMock(spec=[]))
-        await adapter.send(_matrix_outbound(content="Hello Matrix!", msg_type="response"))
+        await adapter.send(
+            _matrix_outbound(content="Hello Matrix!", msg_type="response")
+        )
         adapter._client.room_send.assert_awaited_once()
         call_kwargs = adapter._client.room_send.call_args
         assert call_kwargs.kwargs["room_id"] == "!room:matrix.org"
         assert call_kwargs.kwargs["content"]["body"] == "Hello Matrix!"
         assert call_kwargs.kwargs["content"]["msgtype"] == "m.text"
+        assert call_kwargs.kwargs["ignore_unverified_devices"] is True
 
     async def test_send_error_calls_room_send(self) -> None:
         adapter = _make_matrix_adapter()
         adapter._client.room_send = AsyncMock(return_value=MagicMock(spec=[]))
-        await adapter.send(_matrix_outbound(content="Something went wrong", msg_type="error"))
+        await adapter.send(
+            _matrix_outbound(content="Something went wrong", msg_type="error")
+        )
         adapter._client.room_send.assert_awaited_once()
 
     async def test_send_tool_call_is_dropped(self) -> None:
@@ -1021,11 +1164,9 @@ class TestMatrixAdapterSend:
         assert "m.relates_to" not in content
 
     async def test_send_logs_error_on_room_send_error(
-        self, caplog: pytest.CaptureFixture
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         import logging
-
-        import nio
 
         adapter = _make_matrix_adapter()
         error_response = MagicMock(spec=nio.RoomSendError)
@@ -1043,8 +1184,7 @@ class TestMatrixAdapterStart:
         sender: str = "@user:matrix.org",
         body: str = "Hello!",
         event_id: str = "$evt001",
-    ) -> "nio.RoomMessageText":
-        import nio
+    ) -> nio.RoomMessageText:
 
         source = {
             "event_id": event_id,
@@ -1054,14 +1194,13 @@ class TestMatrixAdapterStart:
             "content": {"msgtype": "m.text", "body": body},
             "room_id": "!room:matrix.org",
         }
-        return nio.RoomMessageText.from_dict(source)  # type: ignore[attr-defined]
+        return nio.RoomMessageText.from_dict(source)
 
     def _make_nio_room(
         self,
         room_id: str = "!room:matrix.org",
         name: str = "Test Room",
-    ) -> "nio.MatrixRoom":
-        import nio
+    ) -> nio.MatrixRoom:
 
         room = nio.MatrixRoom(room_id=room_id, own_user_id="@bot:example.com")
         room.name = name
@@ -1076,18 +1215,24 @@ class TestMatrixAdapterStart:
         room = self._make_nio_room()
 
         # Extract callback by patching add_event_callback to capture it.
-        captured_cb: list = []
+        captured_cb: list[Any] = []
         adapter._client.add_event_callback = MagicMock(
             side_effect=lambda cb, _: captured_cb.append(cb)
         )
-        adapter._client.sync = AsyncMock(side_effect=asyncio.CancelledError())
+
+        first_response = MagicMock(spec=nio.SyncResponse)
+        first_response.next_batch = "tok_001"
+        adapter._client.sync = AsyncMock(return_value=first_response)
+        adapter._client.sync_forever = AsyncMock(side_effect=asyncio.CancelledError())
+        adapter._client.stop_sync_forever = MagicMock()
 
         with pytest.raises(asyncio.CancelledError):
             await adapter.start(router)
 
-        assert len(captured_cb) == 1
+        assert len(captured_cb) == 2
         await captured_cb[0](room, event)
         assert len(captured) == 0
+        adapter._client.stop_sync_forever.assert_called_once_with()
 
     async def test_valid_message_builds_correct_inbound(self) -> None:
         adapter = _make_matrix_adapter()
@@ -1103,11 +1248,16 @@ class TestMatrixAdapterStart:
             name="General",
         )
 
-        captured_cb: list = []
+        captured_cb: list[Any] = []
         adapter._client.add_event_callback = MagicMock(
             side_effect=lambda cb, _: captured_cb.append(cb)
         )
-        adapter._client.sync = AsyncMock(side_effect=asyncio.CancelledError())
+
+        first_response = MagicMock(spec=nio.SyncResponse)
+        first_response.next_batch = "tok_001"
+        adapter._client.sync = AsyncMock(return_value=first_response)
+        adapter._client.sync_forever = AsyncMock(side_effect=asyncio.CancelledError())
+        adapter._client.stop_sync_forever = MagicMock()
 
         with pytest.raises(asyncio.CancelledError):
             await adapter.start(router)
@@ -1136,9 +1286,14 @@ class TestMatrixAdapterStart:
             call_count += 1
             if call_count <= 2:
                 raise ConnectionError("timeout")
-            raise asyncio.CancelledError()
+            response = MagicMock(spec=nio.SyncResponse)
+            response.next_batch = "tok_001"
+            return response
 
         adapter._client.sync = fail_twice
+        adapter._client.sync_forever = AsyncMock(side_effect=asyncio.CancelledError())
+        adapter._client.stop_sync_forever = MagicMock()
+        adapter._client.next_batch = None
         sleep_calls: list[float] = []
 
         async def mock_sleep(delay: float) -> None:
@@ -1153,30 +1308,105 @@ class TestMatrixAdapterStart:
         assert sleep_calls[1] >= sleep_calls[0]
 
     async def test_next_batch_token_passed_on_subsequent_sync(self) -> None:
-        """next_batch from SyncResponse must be passed as since= on the next call."""
-        import nio
+        """Bootstrap sync token must be passed into sync_forever."""
 
         adapter = _make_matrix_adapter()
         router, _ = _mock_router_with_dispatch()
         adapter._client.add_event_callback = MagicMock()
+        adapter._client.stop_sync_forever = MagicMock()
 
-        sync_calls: list[dict] = []
-
-        async def fake_sync(*args, **kwargs):  # type: ignore[no-untyped-def]
-            sync_calls.append(kwargs)
-            if len(sync_calls) == 1:
-                resp = MagicMock(spec=nio.SyncResponse)
-                resp.next_batch = "tok_001"
-                return resp
-            raise asyncio.CancelledError()
-
-        adapter._client.sync = fake_sync
+        first_response = MagicMock(spec=nio.SyncResponse)
+        first_response.next_batch = "tok_001"
+        adapter._client.sync = AsyncMock(return_value=first_response)
+        adapter._client.sync_forever = AsyncMock(side_effect=asyncio.CancelledError())
 
         with pytest.raises(asyncio.CancelledError):
             await adapter.start(router)
 
-        assert len(sync_calls) == 2
-        # First call: no since token.
-        assert sync_calls[0].get("since") is None
-        # Second call: token from first response.
-        assert sync_calls[1].get("since") == "tok_001"
+        adapter._client.sync.assert_awaited_once_with(
+            timeout=0,
+            full_state=True,
+            since=None,
+        )
+        adapter._client.sync_forever.assert_awaited_once_with(
+            timeout=30_000,
+            since="tok_001",
+        )
+
+    async def test_decryption_failures_are_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        adapter = _make_matrix_adapter()
+        router, _ = _mock_router_with_dispatch()
+        room = self._make_nio_room(room_id="!secure:matrix.org", name="Secure")
+        event = nio.MegolmEvent.from_dict(
+            {
+                "event_id": "$enc001",
+                "sender": "@alice:matrix.org",
+                "origin_server_ts": 1000,
+                "type": "m.room.encrypted",
+                "content": {
+                    "algorithm": "m.megolm.v1.aes-sha2",
+                    "ciphertext": "abc",
+                    "device_id": "DEV1",
+                    "sender_key": "key",
+                    "session_id": "sess",
+                },
+                "room_id": "!secure:matrix.org",
+            }
+        )
+
+        captured_cb: list[Any] = []
+        adapter._client.add_event_callback = MagicMock(
+            side_effect=lambda cb, _: captured_cb.append(cb)
+        )
+        first_response = MagicMock(spec=nio.SyncResponse)
+        first_response.next_batch = "tok_001"
+        adapter._client.sync = AsyncMock(return_value=first_response)
+        adapter._client.sync_forever = AsyncMock(side_effect=asyncio.CancelledError())
+        adapter._client.stop_sync_forever = MagicMock()
+
+        with pytest.raises(asyncio.CancelledError):
+            await adapter.start(router)
+
+        with caplog.at_level(logging.WARNING, logger="agent.adapters.matrix_adapter"):
+            await captured_cb[1](room, event)
+
+        assert any("could not decrypt message" in r.message for r in caplog.records)
+
+    async def test_init_loads_store_when_store_path_configured(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from agent.adapters.matrix_adapter import MatrixAdapter
+        from agent.config import MatrixSettings
+
+        load_store = MagicMock()
+
+        class DummyClient:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                self.user_id = ""
+                self.device_id = ""
+                self.access_token = ""
+                self.load_store = load_store
+
+        monkeypatch.setattr(
+            "agent.adapters.matrix_adapter.nio.AsyncClient", DummyClient
+        )
+
+        settings = MatrixSettings(
+            homeserver_url="https://matrix.example.com",
+            access_token="syt_fake",
+            user_id="@bot:example.com",
+            device_id="DEVICE123",
+            store_path=str(tmp_path / "nio_store"),
+        )
+
+        adapter = MatrixAdapter(settings)
+
+        assert Path(settings.store_path).is_dir()
+        load_store.assert_called_once_with()
+        assert adapter._client.user_id == "@bot:example.com"
+        assert adapter._client.device_id == "DEVICE123"
+        assert adapter._client.access_token == "syt_fake"

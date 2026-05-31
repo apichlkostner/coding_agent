@@ -16,7 +16,12 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from agent.__main__ import build_router
-from agent.adapters import DiscordAdapter, HeartbeatAdapter, MatrixAdapter, TerminalAdapter
+from agent.adapters import (
+    DiscordAdapter,
+    HeartbeatAdapter,
+    MatrixAdapter,
+    TerminalAdapter,
+)
 from agent.config import HeartbeatSettings, MatrixSettings, Settings, get_settings
 from agent.router import AgentService, InboundMessage, MessageRouter
 from agent.router.base_adapter import BaseAdapter
@@ -60,9 +65,7 @@ def _settings(**kwargs: Any) -> Settings:
 
 
 class TestEnabledAdaptersConfig:
-    def test_default_includes_all_three(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_default_includes_all_three(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "openai")
         monkeypatch.delenv("ENABLED_ADAPTERS", raising=False)
         s = get_settings()
@@ -76,9 +79,7 @@ class TestEnabledAdaptersConfig:
         assert "heartbeat" in s.enabled_adapters
         assert "discord" not in s.enabled_adapters
 
-    def test_empty_env_means_no_adapters(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_env_means_no_adapters(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "openai")
         monkeypatch.setenv("ENABLED_ADAPTERS", "")
         s = get_settings()
@@ -127,9 +128,7 @@ class TestBuildRouter:
     def test_skips_discord_without_token(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        settings = _settings(
-            enabled_adapters=frozenset({"discord"}), discord_token=""
-        )
+        settings = _settings(enabled_adapters=frozenset({"discord"}), discord_token="")
         with caplog.at_level(logging.WARNING, logger="agent.__main__"):
             router = build_router(settings, graph=_mock_graph())
         assert "discord" not in router._adapters
@@ -417,7 +416,9 @@ class TestBuildRouterMatrix:
     ) -> None:
         settings = _settings(
             enabled_adapters=frozenset({"matrix"}),
-            matrix=MatrixSettings(homeserver_url="", access_token="tok", user_id="@bot:x.org"),
+            matrix=MatrixSettings(
+                homeserver_url="", access_token="tok", user_id="@bot:x.org"
+            ),
         )
         import logging
 
@@ -431,7 +432,9 @@ class TestBuildRouterMatrix:
     ) -> None:
         settings = _settings(
             enabled_adapters=frozenset({"matrix"}),
-            matrix=MatrixSettings(homeserver_url="https://x.org", access_token="", user_id="@bot:x.org"),
+            matrix=MatrixSettings(
+                homeserver_url="https://x.org", access_token="", user_id="@bot:x.org"
+            ),
         )
         import logging
 
@@ -444,7 +447,9 @@ class TestBuildRouterMatrix:
     ) -> None:
         settings = _settings(
             enabled_adapters=frozenset({"matrix"}),
-            matrix=MatrixSettings(homeserver_url="https://x.org", access_token="tok", user_id=""),
+            matrix=MatrixSettings(
+                homeserver_url="https://x.org", access_token="tok", user_id=""
+            ),
         )
         import logging
 
@@ -461,3 +466,23 @@ class TestBuildRouterMatrix:
         )
         router = build_router(settings, graph=_mock_graph())
         assert "matrix" not in router._adapters
+
+    def test_warns_when_matrix_credentials_exist_but_adapter_not_enabled(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        settings = _settings(
+            enabled_adapters=frozenset({"terminal"}),
+            matrix=MatrixSettings(
+                homeserver_url="https://x.org",
+                access_token="tok",
+                user_id="@bot:x.org",
+            ),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="agent.__main__"):
+            router = build_router(settings, graph=_mock_graph())
+
+        assert "matrix" not in router._adapters
+        assert any(
+            "adapter is not enabled" in record.message for record in caplog.records
+        )

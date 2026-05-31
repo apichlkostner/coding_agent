@@ -59,6 +59,9 @@ All settings are loaded from environment variables (`.env` is read automatically
 | `MATRIX_HOMESERVER_URL` | — | Matrix homeserver base URL (e.g. `https://matrix.org`) |
 | `MATRIX_ACCESS_TOKEN` | — | Bot access token; adapter skipped if any Matrix var is absent |
 | `MATRIX_USER_ID` | — | Fully-qualified bot user ID (e.g. `@bot:matrix.org`) |
+| `MATRIX_DEVICE_ID` | — | Optional Matrix device ID for persisted encrypted sessions |
+| `MATRIX_STORE_PATH` | — | Optional `matrix-nio` store directory for E2EE state and sync tokens |
+| `MATRIX_IGNORE_UNVERIFIED_DEVICES` | `true` | When sending into encrypted rooms, allow delivery to proceed even if devices are unverified |
 | `TAVILY_API_KEY` | — | Enables live web search tool |
 | `LANGCHAIN_TRACING_V2` | `false` | Enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | — | LangSmith API key |
@@ -129,12 +132,19 @@ Each user × channel combination gets its own persistent conversation thread (th
    MATRIX_ACCESS_TOKEN=<token from step 2>
    MATRIX_USER_ID=@<username>:<homeserver>
    ```
+    For encrypted rooms, also set a stable device and store path:
+    ```ini
+    MATRIX_DEVICE_ID=<existing or new device id>
+    MATRIX_STORE_PATH=./nio_store
+    ```
 4. Add `matrix` to `ENABLED_ADAPTERS`:
    ```ini
    ENABLED_ADAPTERS=terminal,discord,heartbeat,matrix
    ```
 5. Add the bot to rooms manually using an admin account or Element. The bot does **not** auto-accept invitations.
 6. Start the agent — the bot will respond to every text message in all joined rooms.
+
+On startup, the Matrix adapter performs an initial sync before registering callbacks so it skips old backlog, then continues incremental syncs using the stored sync token when a store path is configured.
 
 Each user × room combination gets its own persistent conversation thread (thread ID: `matrix-{room_id}-{sender_id}`). Replies are threaded using Matrix’s `m.in_reply_to` so conversations stay readable in shared rooms.
 

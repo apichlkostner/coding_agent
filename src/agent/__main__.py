@@ -18,7 +18,12 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from agent.adapters import DiscordAdapter, HeartbeatAdapter, MatrixAdapter, TerminalAdapter
+from agent.adapters import (
+    DiscordAdapter,
+    HeartbeatAdapter,
+    MatrixAdapter,
+    TerminalAdapter,
+)
 from agent.config import Settings, get_settings
 from agent.router import AgentService, MessageRouter
 
@@ -104,8 +109,8 @@ def build_router(
         router.register(HeartbeatAdapter(settings.heartbeat))
         logger.info("Registered HeartbeatAdapter.")
 
+    ms = settings.matrix
     if "matrix" in enabled:
-        ms = settings.matrix
         if ms.homeserver_url and ms.access_token and ms.user_id:
             router.register(MatrixAdapter(ms))
             logger.info("Registered MatrixAdapter.")
@@ -115,6 +120,11 @@ def build_router(
                 "(MATRIX_HOMESERVER_URL / MATRIX_ACCESS_TOKEN / MATRIX_USER_ID)"
                 " — skipping."
             )
+    elif ms.homeserver_url or ms.access_token or ms.user_id:
+        logger.warning(
+            "Matrix credentials are configured but the adapter is not enabled. "
+            "Add 'matrix' to ENABLED_ADAPTERS to start the Matrix adapter."
+        )
 
     return router
 

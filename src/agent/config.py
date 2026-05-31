@@ -46,7 +46,10 @@ class HeartbeatSettings:
     output_channel_id: str = field(default="")
     """Adapter-specific destination for forwarded responses (e.g. a Discord channel ID)."""
 
-_ALL_ADAPTERS: frozenset[str] = frozenset({"terminal", "discord", "heartbeat", "matrix"})
+
+_ALL_ADAPTERS: frozenset[str] = frozenset(
+    {"terminal", "discord", "heartbeat", "matrix"}
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,15 @@ class MatrixSettings:
     user_id: str = field(default="")
     """Fully-qualified Matrix user ID of the bot (e.g. ``@bot:matrix.org``)."""
 
+    device_id: str = field(default="")
+    """Optional Matrix device ID used for encrypted room sessions."""
+
+    store_path: str = field(default="")
+    """Optional matrix-nio crypto store path for persisted E2EE state."""
+
+    ignore_unverified_devices: bool = field(default=True)
+    """Whether outbound sends should ignore unverified devices in encrypted rooms."""
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -75,7 +87,9 @@ class Settings:
     heartbeat: HeartbeatSettings = field(default_factory=HeartbeatSettings)
     matrix: MatrixSettings = field(default_factory=MatrixSettings)
     enabled_adapters: frozenset[str] = field(
-        default_factory=lambda: frozenset({"terminal", "discord", "heartbeat"})
+        default_factory=lambda: frozenset(
+            {"terminal", "discord", "heartbeat", "matrix"}
+        )
     )
     """Set of adapter IDs that should be started.  Controlled by ``ENABLED_ADAPTERS``."""
 
@@ -104,6 +118,12 @@ def get_settings() -> Settings:
         homeserver_url=os.getenv("MATRIX_HOMESERVER_URL", ""),
         access_token=os.getenv("MATRIX_ACCESS_TOKEN", ""),
         user_id=os.getenv("MATRIX_USER_ID", ""),
+        device_id=os.getenv("MATRIX_DEVICE_ID", ""),
+        store_path=os.getenv("MATRIX_STORE_PATH", ""),
+        ignore_unverified_devices=os.getenv(
+            "MATRIX_IGNORE_UNVERIFIED_DEVICES", "true"
+        ).lower()
+        not in {"0", "false", "no", "off"},
     )
     raw_enabled = os.environ.get("ENABLED_ADAPTERS")
     enabled_adapters: frozenset[str] = (
