@@ -440,24 +440,24 @@ This is the minimum-invasive change.
 
 ## File summary
 
-| File | Change | LOC est. |
-|---|---|---|
-| `src/agent/lsp/__init__.py` | new | 15 |
-| `src/agent/lsp/framing.py` | new | 60 |
-| `src/agent/lsp/types.py` | new | 130 |
-| `src/agent/lsp/client.py` | new | 380 |
-| `src/agent/tools/tools_clangd.py` | new | 280 |
-| `src/agent/tools/__init__.py` | edit | +10 |
-| `src/agent/tools/tools.py` | edit | +12 |
-| `src/agent/__main__.py` | edit | +6 |
-| `tests/test_lsp_client.py` | new | 450 |
-| `tests/test_lsp_tools.py` | new | 280 |
-| `tests/fixtures/lsp_cpp/` | new (4 files + conftest) | 80 |
-| `README.md` | edit | +25 |
-| `docs/lsp_clangd.md` | new | 60 |
-| `pyproject.toml` | no change | 0 |
+| File | Change | LOC est. | Status |
+|---|---|---|---|---|
+| `src/agent/lsp/__init__.py` | new | 15 | DONE |
+| `src/agent/lsp/framing.py` | new | 60 | DONE |
+| `src/agent/lsp/types.py` | new | 130 | DONE |
+| `src/agent/lsp/client.py` | new | 380 | DONE |
+| `src/agent/tools/tools_clangd.py` | new | 280 | TODO |
+| `src/agent/tools/__init__.py` | edit | +10 | TODO |
+| `src/agent/tools/tools.py` | edit | +12 | TODO |
+| `src/agent/__main__.py` | edit | +6 | TODO |
+| `tests/test_lsp_client.py` | new | 450 | DONE (31 pass, 1 skip) |
+| `tests/test_lsp_tools.py` | new | 280 | TODO |
+| `tests/fixtures/lsp_cpp/` | new (4 files + conftest) | 80 | TODO |
+| `README.md` | edit | +25 | TODO |
+| `docs/lsp_clangd.md` | new | 60 | TODO |
+| `pyproject.toml` | no change | 0 | — |
 
-Total new + changed: ~1 800 LOC, dominated by tests and the client class.
+Total new + changed: ~1 800 LOC. Steps 1–3 are done; Step 4–7 remain.
 
 ## Open Questions — Resolved
 
@@ -468,8 +468,64 @@ Total new + changed: ~1 800 LOC, dominated by tests and the client class.
 
 ## Implementation Notes
 
-_(filled in after implementation)_
+### Completed (Steps 1–3)
 
-- Deviations from this plan.
-- Newly discovered limitations.
-- Any follow-up work.
+All files in `src/agent/lsp/` are implemented and tested. `tests/test_lsp_client.py` has 32 tests (31 pass, 1 skipped when `clangd` is not on `PATH`).
+
+### Findings relevant to remaining steps
+
+#### 1. `_BidiClientPipe` wiring convention
+
+The bidirectional pipe connects two independent lanes:
+
+```
+client_writer.write()  → feeds server_reader   (client → server)
+server_writer.write()  → feeds client_reader   (server → client)
+```
+
+When writing tests that use the pipe directly (e.g. in `TestFraming`), always match lanes correctly. The `_start_wired` helper in the test file shows the canonical wiring:
+
+```python
+client._attach_pipes(
+    stdin=pipe.client_writer,   # client writes here → goes to server_reader
+    stdout=pipe.client_reader,  # client reads here  → comes from server_writer
+    stderr=asyncio.StreamReader(),
+)
+```
+
+#### 2. Custom transport `drain()` does not yield
+
+The `_build_writer` method uses a custom `WriteTransport` subclass that directly calls `target_reader.feed_data(data)`. This transport never pauses reading, so `StreamWriter.drain()` — which in CPython 3.12 calls `StreamReaderProtocol._drain_helper()` — returns immediately without yielding to the event loop.
+
+**Consequence:** When the LSP client sends a notification (e.g. `didOpen`, `initialized`, `didClose`) via `_notify`, the mock server's `_serve` task may not have processed the data yet by the time the test reaches its assertion. This is because `_notify` writes data to the pipe and returns without yielding, so the event loop never schedules the mock server's reader task.
+
+**Fix pattern for tests:** Add `await asyncio.sleep(0)` after any notification call (or any sequence of notification calls) before asserting on the mock server's state. The `_start_wired` helper already includes this yield after the handshake to flush the `initialized` notification.
+
+**Impact on tool tests (Step 5):** Tool tests that invoke notification-triggering tools (like `clangd_document_symbols` which calls `ensure_open` internally) will NOT need extra yields, because tool calls ultimately issue requests (which await a response and thus yield). Only tests that only send notifications without any subsequent request will hit this.
+
+#### 3. `mock.sent_to_client` tracks client→server messages, not server→client
+
+Despite the name, `mock.sent_to_client` records every message the mock server *reads from the client* (via `server_reader`). This includes both client requests (e.g. `initialize` with `id=1`) and client responses to server-initiated requests (e.g. `{"id": 1001, "result": ...}`).
+
+When writing assertions on client responses, filter for messages that have `"id"` but not `"method"`:
+
+```python
+responses = [
+    m for m in mock.sent_to_client
+    if m.get("id") is not None and "method" not in m
+]
+```
+
+#### 4. Mock server's `_serve` must write via `server_writer`
+
+The mock server reads client requests from `server_reader` and must write responses to `server_writer` (which feeds the client's `client_reader`). Using `client_writer` would loop responses back to its own input reader.
+
+This was a bug in the original test implementation — the `_serve` method used `self.client_streams.client_writer`.
+
+#### 5. No extra dependencies needed
+
+The implementation uses only stdlib (`asyncio`, `subprocess`, `json`, `pathlib`, `urllib`, `shutil`). Confirmed.
+
+#### 6. Python 3.12 `loop=` deprecation
+
+`asyncio.StreamReader(loop=loop)` and `asyncio.StreamWriter(..., loop=loop)` emit `DeprecationWarning` in Python 3.12 but still work. The warnings appear when these are called outside a running event loop (e.g. during test collection). To silence them in the test helper, the implementation could omit the `loop=` argument entirely — in 3.12 these classes use `asyncio.get_running_loop()` internally. Not a blocker but worth cleaning up.
