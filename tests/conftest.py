@@ -1,8 +1,10 @@
 """Conftest for the integration tests under ``tests/fixtures/lsp_cpp``.
 
-Provides a session-scoped fixture that stages the C++ project into a
+Provides a function-scoped fixture that stages the C++ project into a
 temp directory and rewrites ``compile_commands.json`` to point at the
-real (absolute) workspace location, which clangd requires.
+real (absolute) workspace location, which clangd requires.  Each
+integration test gets a pristine workspace, so state cannot leak
+between tests.
 """
 
 from __future__ import annotations

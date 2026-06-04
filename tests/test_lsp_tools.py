@@ -53,25 +53,6 @@ async def _async_return(value: Any) -> Any:
 
 
 @pytest.fixture
-def workspace_root(tmp_path: Path) -> Path:
-    """``os.getcwd()`` is the project root for the path-safety policy.
-
-    The tools' :func:`_is_subpath` checks paths against ``os.getcwd()``;
-    we change into ``tmp_path`` so the fixture files we create are
-    inside the "project".
-    """
-    original = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        return tmp_path
-    finally:
-        # We don't restore here — pytest fixture finalisation order
-        # can call this late.  The test's own teardown will chdir
-        # back to a safe location if needed.
-        os.chdir(original)  # noqa: F841 - placeholder for clarity
-
-
-@pytest.fixture
 async def wired_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[ClangdClient, MockLspServer, _BidiClientPipe, Path]:
@@ -96,6 +77,36 @@ async def wired_client(
         await client.stop()
         pipe.close()
     finally:
+        os.chdir(original)
+
+
+@pytest.fixture
+async def live_client(
+    lsp_cpp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> ClangdClient:
+    """Yield a started ``ClangdClient`` rooted at *lsp_cpp_project*.
+
+    Patches ``agent.tools.tools_clangd.get_default_client`` so the
+    tools route through this client, chdirs into the project root
+    (the path-safety policy anchors at ``os.getcwd()``), and stops
+    the subprocess on teardown.
+    """
+    original = os.getcwd()
+    os.chdir(lsp_cpp_project)
+    client = ClangdClient(
+        workspace_root=lsp_cpp_project,
+        startup_timeout=20.0,
+        request_timeout=15.0,
+    )
+    monkeypatch.setattr(
+        "agent.tools.tools_clangd.get_default_client",
+        lambda: _async_return(client),
+    )
+    await client.start()
+    try:
+        yield client
+    finally:
+        await client.stop()
         os.chdir(original)
 
 
@@ -530,96 +541,61 @@ class TestClangdToolsIntegration:
         await reset_default_client()
 
     async def test_workspace_symbols_finds_function(
-        self, lsp_cpp_project: Path, monkeypatch: pytest.MonkeyPatch
+        self, live_client: ClangdClient, lsp_cpp_project: Path
     ) -> None:
-        client = ClangdClient(
-            workspace_root=lsp_cpp_project,
-            startup_timeout=20.0,
-            request_timeout=15.0,
+        # Open the file so clangd indexes it. The tool layer
+        # only triggers did_open for cursor-relative queries;
+        # workspace_symbol relies on the workspace index, but
+        # clangd won't index a file that hasn't been opened.
+        main_cpp = lsp_cpp_project / "main.cpp"
+        await live_client.did_open(
+            str(main_cpp), main_cpp.read_text(encoding="utf-8")
         )
-        monkeypatch.setattr(
-            "agent.tools.tools_clangd.get_default_client",
-            lambda: _async_return(client),
-        )
 
-        original = os.getcwd()
-        os.chdir(lsp_cpp_project)
-        try:
-            await client.start()
-            try:
-                # Open the file so clangd indexes it. The tool layer
-                # only triggers did_open for cursor-relative queries;
-                # workspace_symbol relies on the workspace index, but
-                # clangd won't index a file that hasn't been opened.
-                main_cpp = lsp_cpp_project / "main.cpp"
-                await client.did_open(
-                    str(main_cpp), main_cpp.read_text(encoding="utf-8")
-                )
+        payload: list[dict[str, Any]] = []
+        for _ in range(40):
+            result = await clangd_workspace_symbols.ainvoke({"query": "main"})
+            payload = json.loads(result)
+            if any(s.get("name") == "main" for s in payload):
+                break
+            await asyncio.sleep(0.5)
+        else:
+            pytest.fail(f"clangd never indexed 'main': {payload!r}")
 
-                payload: list[dict[str, Any]] = []
-                for _ in range(40):
-                    result = await clangd_workspace_symbols.ainvoke({"query": "main"})
-                    payload = json.loads(result)
-                    if any(s.get("name") == "main" for s in payload):
-                        break
-                    await asyncio.sleep(0.5)
-                else:
-                    pytest.fail(f"clangd never indexed 'main': {payload!r}")
-
-                names = {s["name"] for s in payload}
-                assert "main" in names
-            finally:
-                await client.stop()
-        finally:
-            os.chdir(original)
+        names = {s["name"] for s in payload}
+        assert "main" in names
 
     async def test_definition_finds_function_definition(
-        self, lsp_cpp_project: Path, monkeypatch: pytest.MonkeyPatch
+        self, live_client: ClangdClient, lsp_cpp_project: Path
     ) -> None:
-        client = ClangdClient(
-            workspace_root=lsp_cpp_project,
-            startup_timeout=20.0,
-            request_timeout=15.0,
-        )
-        monkeypatch.setattr(
-            "agent.tools.tools_clangd.get_default_client",
-            lambda: _async_return(client),
-        )
-
-        original = os.getcwd()
-        os.chdir(lsp_cpp_project)
-        try:
-            main_cpp = lsp_cpp_project / "main.cpp"
-            await client.start()
-            try:
-                # Position the cursor inside `greet` on the call site.
-                # The file is:
-                #   line 1: #include "hello.h"
-                #   line 2: (empty)
-                #   line 3: int main() {
-                #   line 4:     Greeter g("world");
-                #   line 5:     std::string msg = g.greet();
-                #   ...
-                # 1-based line=5, 0-based character inside `greet`
-                # (position 24 of "    std::string msg = g.greet();")
-                # should resolve to Greeter::greet() in hello.cpp.
-                payload: list[dict[str, Any]] = []
-                for _ in range(40):
-                    result = await clangd_definition.ainvoke(
-                        {
-                            "path": str(main_cpp),
-                            "line": 5,
-                            "character": 25,
-                        }
-                    )
-                    payload = json.loads(result)
-                    if payload and "hello.cpp" in payload[0].get("path", ""):
-                        break
-                    await asyncio.sleep(0.5)
-                else:
-                    pytest.fail(f"definition never resolved: {payload!r}")
-                assert payload[0]["line"] >= 1
-            finally:
-                await client.stop()
-        finally:
-            os.chdir(original)
+        # Position the cursor inside `greet` on the call site.
+        # The file is:
+        #   line 1: #include "hello.h"
+        #   line 2: (empty)
+        #   line 3: int main() {
+        #   line 4:     Greeter g("world");
+        #   line 5:     std::string msg = g.greet();
+        #   ...
+        # 1-based line=5, 0-based character inside `greet`
+        # (position 24 of "    std::string msg = g.greet();")
+        # should resolve to Greeter::greet() in hello.cpp.
+        # ``ClangdClient.definition`` calls ``ensure_open`` internally,
+        # so an explicit did_open is unnecessary here (unlike
+        # workspace_symbols, which has no per-file target).
+        main_cpp = lsp_cpp_project / "main.cpp"
+        payload: list[dict[str, Any]] = []
+        for _ in range(40):
+            result = await clangd_definition.ainvoke(
+                {
+                    "path": str(main_cpp),
+                    "line": 5,
+                    "character": 25,
+                }
+            )
+            payload = json.loads(result)
+            if payload and "hello.cpp" in payload[0].get("path", ""):
+                break
+            await asyncio.sleep(0.5)
+        else:
+            pytest.fail(f"definition never resolved: {payload!r}")
+        assert payload[0]["line"] >= 1

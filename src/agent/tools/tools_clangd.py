@@ -3,14 +3,14 @@
 Eight LangChain ``@tool`` functions that wrap the :class:`agent.lsp.ClangdClient`
 singleton and expose its features to the ReAct agent:
 
+- ``clangd_call_hierarchy``     — explore incoming / outgoing calls of a function.
 - ``clangd_completion``         — list code completions at a cursor position.
 - ``clangd_definition``         — jump to the definition of a symbol.
-- ``clangd_references``         — find all references to a symbol.
 - ``clangd_document_symbols``   — list symbols defined in a single file.
-- ``clangd_workspace_symbols``  — search symbols across the workspace.
+- ``clangd_references``         — find all references to a symbol.
 - ``clangd_rename``             — return a ``WorkspaceEdit`` renaming a symbol.
 - ``clangd_type_hierarchy``     — explore supertypes / subtypes of a type.
-- ``clangd_call_hierarchy``     — explore incoming / outgoing calls of a function.
+- ``clangd_workspace_symbols``  — search symbols across the workspace.
 
 All tools return a JSON string and catch every exception into a
 ``"Error: ..."`` payload so the LLM can react gracefully. Filesystem paths
@@ -34,6 +34,7 @@ The first invocation may take a few seconds; subsequent calls are fast.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, cast
 
 from langchain_core.tools import tool
@@ -88,10 +89,17 @@ _SYMBOL_KIND_NAMES: dict[int, str] = {
 
 
 def _resolve_path(path: str) -> str | None:
-    """Validate *path* is inside the project root. Return absolute path or None."""
+    """Validate *path* is inside the project root. Return absolute path or None.
+
+    The returned path is resolved against the process cwd and symlinks
+    are followed, so the caller always receives a canonical absolute
+    path.  This is important for clangd: relative paths would be
+    interpreted against whatever the subprocess happens to consider cwd,
+    which can drift (tests, ``chdir`` in long-running sessions, etc.).
+    """
     if not _is_subpath(path, strict=True):
         return None
-    return str(path)
+    return str(Path(path).resolve())
 
 
 def _line_col_to_0based(line: int, character: int) -> tuple[int, int]:
@@ -279,6 +287,13 @@ def _truncate_payload(obj: Any) -> str:
 
     A trailing ``{"truncated": true, "omitted_count": N}`` sentinel is
     appended to list-like payloads so the LLM knows the output is partial.
+
+    Implementation note: list truncation uses a binary search over the
+    candidate prefix length, re-serialising on each step.  For typical
+    payload sizes this is well under a millisecond and stays simple.
+    A linear scan (accumulate items until the budget breaks) would be
+    O(n) with a single serialisation; deferred until profiling shows
+    the binary search is hot.
     """
     if isinstance(obj, list) and obj:
         text = json.dumps(obj, indent=2)
@@ -504,6 +519,15 @@ async def clangd_workspace_symbols(query: str) -> str:
         "line", "character"}`` objects (line is 1-based), or
         ``"Error: ..."`` on failure.
 
+    Note
+    ----
+    The tool takes a symbol query, not a file path, so no path-safety
+    check is applied to the input.  Result ``path`` fields are *also*
+    left as-is: the search spans the whole workspace and we trust
+    clangd to only return symbols from indexed files.  An adversarial
+    or buggy clangd response could surface a path outside the project
+    root; downstream file-writing tools enforce the policy there.
+
     Examples
     --------
     clangd_workspace_symbols("Greeter")
@@ -541,9 +565,12 @@ async def clangd_rename(
     Returns
     -------
     str
-        JSON object with a ``"changes"`` key (mapping file path to a
-        list of ``{"range", "new_text"}`` edits), or ``"Error: ..."``
-        on failure. If the symbol cannot be renamed, returns ``null``.
+        JSON object with a ``"changes"`` key (mapping ``file://`` URI
+        to a list of ``{"range", "new_text"}`` edits), or
+        ``"Error: ..."`` on failure.  If the symbol cannot be renamed
+        (clangd returns ``null``), the tool returns
+        ``{"changes": {}}`` instead — empty edits, never the literal
+        ``null`` — so the LLM does not have to null-check.
 
     Examples
     --------
