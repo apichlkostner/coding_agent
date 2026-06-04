@@ -887,29 +887,15 @@ def _mock_router_with_forwarding() -> tuple[
 
 
 class TestHeartbeatAdapterForwarding:
-    async def test_send_forwards_response_to_output_adapter(self) -> None:
-        settings = HeartbeatSettings(
-            output_adapter_id="discord",
-            output_channel_id="99999",
-        )
-        adapter = HeartbeatAdapter(settings)
-        router, _, forwarded = _mock_router_with_forwarding()
-        adapter._router = router  # type: ignore[assignment]
+    """Forwarding no longer happens inside send().
 
-        msg = _outbound(
-            content="Heartbeat done.",
-            adapter_id="heartbeat",
-            reply_channel_id="log",
-            msg_type="response",
-        )
-        await adapter.send(msg)
+    The agent queues notifications via the ``send_notification`` tool,
+    and the adapter dispatches them after each agent run via
+    ``consume_notifications()``.
+    """
 
-        assert len(forwarded) == 1
-        assert forwarded[0].adapter_id == "discord"
-        assert forwarded[0].reply_channel_id == "99999"
-        assert forwarded[0].content == "Heartbeat done."
-
-    async def test_send_forwards_error_to_output_adapter(self) -> None:
+    async def test_send_does_not_forward(self) -> None:
+        """send() only logs; forwarding is handled separately."""
         settings = HeartbeatSettings(
             output_adapter_id="discord",
             output_channel_id="99999",
@@ -920,115 +906,90 @@ class TestHeartbeatAdapterForwarding:
 
         await adapter.send(
             _outbound(
-                content="boom",
-                msg_type="error",
+                content="Heartbeat done.",
+                msg_type="response",
                 adapter_id="heartbeat",
                 reply_channel_id="log",
-            )
-        )
-
-        assert len(forwarded) == 1
-        assert forwarded[0].msg_type == "error"
-
-    async def test_send_forwards_tool_call_to_output_adapter(self) -> None:
-        """All msg_types are forwarded; the target adapter decides what to render."""
-        settings = HeartbeatSettings(
-            output_adapter_id="discord",
-            output_channel_id="99999",
-        )
-        adapter = HeartbeatAdapter(settings)
-        router, _, forwarded = _mock_router_with_forwarding()
-        adapter._router = router  # type: ignore[assignment]
-
-        await adapter.send(
-            _outbound(
-                content="bash(...)",
-                msg_type="tool_call",
-                adapter_id="heartbeat",
-                reply_channel_id="log",
-            )
-        )
-
-        assert len(forwarded) == 1
-        assert forwarded[0].msg_type == "tool_call"
-
-    async def test_send_preserves_metadata_when_forwarding(self) -> None:
-        settings = HeartbeatSettings(output_adapter_id="discord", output_channel_id="1")
-        adapter = HeartbeatAdapter(settings)
-        router, _, forwarded = _mock_router_with_forwarding()
-        adapter._router = router  # type: ignore[assignment]
-
-        msg = OutboundMessage(
-            adapter_id="heartbeat",
-            reply_channel_id="log",
-            content="done",
-            metadata={"msg_type": "response", "node_name": "agent"},
-        )
-        await adapter.send(msg)
-
-        assert forwarded[0].metadata["node_name"] == "agent"
-
-    async def test_send_does_not_forward_without_output_adapter(self) -> None:
-        adapter = HeartbeatAdapter(HeartbeatSettings())  # no output config
-        router, _, forwarded = _mock_router_with_forwarding()
-        adapter._router = router  # type: ignore[assignment]
-
-        await adapter.send(
-            _outbound(
-                msg_type="response", adapter_id="heartbeat", reply_channel_id="log"
             )
         )
 
         assert len(forwarded) == 0
 
-    async def test_send_does_not_forward_when_only_adapter_set(self) -> None:
-        """Both output_adapter_id AND output_channel_id must be set."""
+    async def test_notifications_forwarded_after_run(self) -> None:
+        """Notifications queued via send_notification are forwarded post-run."""
+        from agent.tools.tools_notifications import consume_notifications
+
+        settings = HeartbeatSettings(
+            output_adapter_id="discord",
+            output_channel_id="99999",
+        )
+        adapter = HeartbeatAdapter(settings)
+        router, _, forwarded = _mock_router_with_forwarding()
+        adapter._router = router  # type: ignore[assignment]
+
+        # Simulate what happens during an agent run:
+        # agent calls send_notification tool
+        from agent.tools.tools_notifications import send_notification
+
+        await send_notification.ainvoke({"content": "Weather changed to cloudy"})
+
+        # After the run, the adapter consumes notifications
+        assert (await adapter._maybe_forward_notifications()) is True
+
+        assert len(forwarded) == 1
+        assert forwarded[0].adapter_id == "discord"
+        assert forwarded[0].reply_channel_id == "99999"
+        assert forwarded[0].content == "Weather changed to cloudy"
+
+    async def test_no_forwarding_when_no_notifications(self) -> None:
+        """If no send_notification call, nothing is forwarded."""
+        from agent.tools.tools_notifications import consume_notifications
+
+        settings = HeartbeatSettings(
+            output_adapter_id="discord",
+            output_channel_id="99999",
+        )
+        adapter = HeartbeatAdapter(settings)
+        router, _, forwarded = _mock_router_with_forwarding()
+        adapter._router = router  # type: ignore[assignment]
+
+        assert (await adapter._maybe_forward_notifications()) is False
+        assert len(forwarded) == 0
+
+    async def test_no_forwarding_without_output_adapter(self) -> None:
+        adapter = HeartbeatAdapter(HeartbeatSettings())
+        router, _, forwarded = _mock_router_with_forwarding()
+        adapter._router = router  # type: ignore[assignment]
+
+        from agent.tools.tools_notifications import send_notification
+
+        await send_notification.ainvoke({"content": "test"})
+        assert (await adapter._maybe_forward_notifications()) is False
+        assert len(forwarded) == 0
+
+    async def test_no_forwarding_when_only_adapter_set(self) -> None:
         settings = HeartbeatSettings(output_adapter_id="discord", output_channel_id="")
         adapter = HeartbeatAdapter(settings)
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
-        await adapter.send(
-            _outbound(
-                msg_type="response", adapter_id="heartbeat", reply_channel_id="log"
-            )
-        )
+        from agent.tools.tools_notifications import send_notification
+
+        await send_notification.ainvoke({"content": "test"})
+        assert (await adapter._maybe_forward_notifications()) is False
         assert len(forwarded) == 0
 
-    async def test_send_does_not_forward_when_only_channel_set(self) -> None:
+    async def test_no_forwarding_when_only_channel_set(self) -> None:
         settings = HeartbeatSettings(output_adapter_id="", output_channel_id="99999")
         adapter = HeartbeatAdapter(settings)
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
-        await adapter.send(
-            _outbound(
-                msg_type="response", adapter_id="heartbeat", reply_channel_id="log"
-            )
-        )
+        from agent.tools.tools_notifications import send_notification
+
+        await send_notification.ainvoke({"content": "test"})
+        assert (await adapter._maybe_forward_notifications()) is False
         assert len(forwarded) == 0
-
-    async def test_send_logs_warning_when_router_not_set(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        import logging
-
-        settings = HeartbeatSettings(
-            output_adapter_id="discord", output_channel_id="99999"
-        )
-        adapter = HeartbeatAdapter(settings)
-        # _router intentionally left as None
-
-        with caplog.at_level(
-            logging.WARNING, logger="agent.adapters.heartbeat_adapter"
-        ):
-            await adapter.send(
-                _outbound(
-                    msg_type="response", adapter_id="heartbeat", reply_channel_id="log"
-                )
-            )
-
-        assert any("router" in r.message.lower() for r in caplog.records)
 
     async def test_start_forwarding_config_logged(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

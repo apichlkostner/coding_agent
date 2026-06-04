@@ -10,6 +10,8 @@ from agent.tools.tools_filesystem import (
     replace_in_file,
     write_file,
 )
+from agent.tools.tools_memory import read_memory, store_memory
+from agent.tools.tools_notifications import send_notification
 from agent.tools.tools_treesitter import (
     treesitter_get_symbols,
     treesitter_parse,
@@ -28,7 +30,10 @@ __all__ = [
     "grep",
     "list_directory",
     "read_file",
+    "read_memory",
     "replace_in_file",
+    "send_notification",
+    "store_memory",
     "write_file",
     "treesitter_get_symbols",
     "treesitter_parse",

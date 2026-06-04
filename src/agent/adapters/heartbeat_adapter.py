@@ -10,6 +10,7 @@ from agent.config import HeartbeatSettings
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
+from agent.tools.tools_notifications import consume_notifications
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +20,13 @@ class HeartbeatAdapter(BaseAdapter):
 
     Reads a Markdown prompt file once at startup, then invokes the agent on
     that prompt at a configurable interval.  All output is always written to
-    the standard Python logger.  If ``settings.output_adapter_id`` and
-    ``settings.output_channel_id`` are both non-empty, every outbound message
-    is also forwarded to that adapter via
-    :meth:`~agent.router.router.MessageRouter.send_to` — enabling heartbeat
-    results to appear in a Discord channel, for example.
+    the standard Python logger.
+
+    The agent controls *outbound forwarding* explicitly by calling the
+    :func:`~agent.tools.tools_notifications.send_notification` tool — when it does,
+    the message is forwarded to ``settings.output_adapter_id`` /
+    ``settings.output_channel_id``.  Normal response text is logged only;
+    nothing is forwarded unless the agent asks for it.
 
     This is the canonical example of an *agent-initiated* message flow: no
     human types anything — the adapter injects a synthetic
@@ -81,15 +84,43 @@ class HeartbeatAdapter(BaseAdapter):
             )
             task = await router.dispatch(inbound)
             await task  # wait for agent to finish before sleeping
+
+            await self._maybe_forward_notifications()
             await asyncio.sleep(self._settings.interval_seconds)
 
-    async def send(self, message: OutboundMessage) -> None:
-        """Log the agent's output and optionally forward it to another adapter.
+    async def _maybe_forward_notifications(self) -> bool:
+        """Forward any notifications the agent queued during this run.
 
-        Logging always happens regardless of forwarding configuration.
-        Forwarding is only performed when both ``output_adapter_id`` and
-        ``output_channel_id`` are set in the adapter's
-        :class:`~agent.config.HeartbeatSettings`.
+        Returns ``True`` if at least one notification was forwarded.
+        """
+        if (
+            not self._settings.output_adapter_id
+            or not self._settings.output_channel_id
+            or self._router is None
+        ):
+            consume_notifications()  # drain buffer even when forwarding disabled
+            return False
+
+        forwarded = False
+        for notification in consume_notifications():
+            await self._router.send_to(
+                OutboundMessage(
+                    adapter_id=self._settings.output_adapter_id,
+                    reply_channel_id=self._settings.output_channel_id,
+                    content=notification,
+                    metadata={"msg_type": "response"},
+                )
+            )
+            forwarded = True
+        return forwarded
+
+    async def send(self, message: OutboundMessage) -> None:
+        """Log the agent's output (no automatic forwarding).
+
+        Logging always happens.  Forwarding to the configured output channel
+        is *not* done here — it is handled after each run by consuming the
+        notification buffer that the agent populated via the
+        :func:`~agent.tools.tools_notifications.send_notification` tool.
         """
         node = message.metadata.get("node_name") or "agent"
 
@@ -103,20 +134,3 @@ class HeartbeatAdapter(BaseAdapter):
             logger.error("Heartbeat error: %s", message.content)
         else:
             logger.info("%s", message.content)
-
-        # Forward to the configured output adapter if set.
-        if self._settings.output_adapter_id and self._settings.output_channel_id:
-            if self._router is not None:
-                await self._router.send_to(
-                    OutboundMessage(
-                        adapter_id=self._settings.output_adapter_id,
-                        reply_channel_id=self._settings.output_channel_id,
-                        content=message.content,
-                        metadata=dict(message.metadata),
-                    )
-                )
-            else:
-                logger.warning(
-                    "HeartbeatAdapter: forwarding is configured but the router "
-                    "is not available (send() called before start())."
-                )
