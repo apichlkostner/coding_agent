@@ -7,11 +7,13 @@ A LangGraph ReAct (Reasoning + Acting) AI agent specialised for coding tasks. Th
 - **ReAct loop** built with LangGraph `StateGraph`
 - **Multi-provider** support: OpenAI (default `gpt-5.4-nano`), Anthropic (default `claude-haiku-4-5`), and Ollama local models (default `qwen2.5-coder:14b`)
 - **Built-in tools**: safe arithmetic evaluator, current UTC datetime
+- **Persistent memory**: key-value store (`store_memory`/`read_memory`) backed by JSON file, survives restarts
+- **Notification buffer**: agent-initiated alerts via `send_notification` — only forwarded to output channel when explicitly triggered
 - **Filesystem tools**: read, write, list, create directory, replace-in-file, grep
 - **Shell tool**: run arbitrary bash commands (see [Security](#security))
 - **Optional web search** via Tavily (enabled when `TAVILY_API_KEY` is set)
 - **Message router**: clean adapter abstraction — terminal REPL, Discord bot, and periodic heartbeat run concurrently through a single router
-- **Heartbeat**: periodic agent-initiated runs driven by a Markdown prompt file; output can be forwarded to any adapter (e.g. a Discord monitoring channel)
+- **Heartbeat**: periodic agent-initiated runs driven by a Markdown prompt file; agent controls forwarding via `send_notification`
 - **Per-session memory**: conversations persisted per thread via `InMemorySaver`
 - **Full test suite** runnable without live API keys
 
@@ -90,7 +92,7 @@ This starts all enabled adapters concurrently inside a single process:
 
 - **Terminal REPL** — type messages directly in the terminal. The agent prints `[node] response` as steps complete. Type `quit`, `exit`, `q`, or press Ctrl-D to stop.
 - **Discord bot** — if `DISCORD_BOT_TOKEN` is set, the bot comes online and responds to messages in any channel it can read. A "typing…" indicator is shown while the agent works.
-- **Heartbeat** — reads `HEARTBEAT.md` (configurable) and runs the agent on that prompt every N seconds. Output is written to `agent.log`. Optionally forwards responses to any registered adapter.
+- **Heartbeat** — reads `HEARTBEAT.md` (configurable) and runs the agent on that prompt every N seconds. Output is written to `agent.log`. The agent controls when to forward messages to the output channel by calling `send_notification`.
 
 All interfaces share the same agent graph and per-session conversation memory. Each source gets its own LangGraph thread ID so histories are kept isolated.
 
@@ -154,7 +156,8 @@ The heartbeat runs the agent on a schedule without any human input. Create a `HE
 
 ```markdown
 Check the project status. Look at recent git commits, open TODOs, and report
-anything that needs attention. Be concise.
+anything that needs attention. Be concise. If something is worth alerting
+about, call send_notification with the message.
 ```
 
 Then configure the interval and, optionally, where to send the results:
@@ -169,9 +172,21 @@ HEARTBEAT_OUTPUT_ADAPTER=discord
 HEARTBEAT_OUTPUT_CHANNEL=1234567890123456789  # right-click a channel → Copy Channel ID
 ```
 
-When `HEARTBEAT_OUTPUT_ADAPTER` and `HEARTBEAT_OUTPUT_CHANNEL` are both set, the heartbeat response is posted to that adapter in addition to being logged. If neither is set, output goes only to `agent.log`.
+When `HEARTBEAT_OUTPUT_ADAPTER` and `HEARTBEAT_OUTPUT_CHANNEL` are both set, the agent can forward messages by calling `send_notification`. Normal response text is only logged — nothing reaches the output channel unless the agent explicitly calls the tool. If neither is set, output goes only to `agent.log`.
 
-> **Note:** `HEARTBEAT_OUTPUT_ADAPTER` must match the `adapter_id` of a registered adapter (`"discord"`, `"terminal"`, or any future adapter). The Discord adapter must also be enabled and have a valid token.
+This pattern is useful for state-change detection. For example, using the memory tools to track previous state:
+
+```markdown
+Check the weather at my location.
+- Read `last_weather` from memory with read_memory.
+- Determine the current condition.
+- If the current condition differs from memory (or memory is empty),
+  call send_notification with a brief alert message.
+- Always call store_memory("last_weather", "<current condition>") at the end.
+- If nothing changed, do NOT call send_notification.
+```
+
+> **Note:** `HEARTBEAT_OUTPUT_ADAPTER` must match the `adapter_id` of a registered adapter (`"discord"`, `"matrix"`, `"terminal"`, or any future adapter). The output adapter must also be enabled and have valid credentials.
 
 ## Project Structure
 
@@ -190,6 +205,8 @@ src/agent/
 │   ├── tools.py             # get_tools() aggregator + web_search
 │   ├── tools_filesystem.py  # Filesystem tools (read/write/list/grep/replace)
 │   ├── tools_cmd.py         # Shell tool (bash)
+│   ├── tools_memory.py      # Persistent key-value memory (store_memory, read_memory)
+│   ├── tools_notifications.py  # Notification buffer (send_notification)
 │   └── tools_treesitter.py  # Tree-sitter parsing & query tools
 │
 ├── router/                  # Routing layer
@@ -248,7 +265,7 @@ examples/
 **Key properties:**
 - Each adapter translates platform events into `InboundMessage` and `OutboundMessage`; the router and agent service never touch platform-specific APIs.
 - Messages on the **same thread ID** are serialised (one `asyncio.Lock` per thread) to prevent LangGraph checkpointer races. Messages on different threads run concurrently.
-- `HeartbeatAdapter` is agent-*initiated*: it injects `InboundMessage` objects on a schedule rather than waiting for user input.
+- `HeartbeatAdapter` is agent-*initiated*: it injects `InboundMessage` objects on a schedule rather than waiting for user input. After each run it drains the notification buffer (messages queued via `send_notification`) and forwards them to the configured output adapter.
 
 ## Graph Architecture
 
@@ -273,6 +290,9 @@ The `agent` node prepends a system prompt (with today's date) and calls the LLM 
 | `create_directory` | `tools/tools_filesystem.py` | Create a directory (mkdir -p) |
 | `replace_in_file` | `tools/tools_filesystem.py` | Replace a string inside a file |
 | `grep` | `tools/tools_filesystem.py` | Regex search across files in a directory |
+| `store_memory` | `tools/tools_memory.py` | Persist a key-value pair to `.agent_memory.json` |
+| `read_memory` | `tools/tools_memory.py` | Retrieve a previously stored value by key |
+| `send_notification` | `tools/tools_notifications.py` | Queue a message for the configured output channel (heartbeat only) |
 | `bash` | `tools/tools_cmd.py` | Run an arbitrary shell command |
 | `treesitter_parse` | `tools/tools_treesitter.py` | Parse a source file or code string into a JSON syntax tree (bounded by depth and character limit) |
 | `treesitter_query` | `tools/tools_treesitter.py` | Run a tree-sitter S-expression query against a source file or code string; returns matched captures as JSON |
