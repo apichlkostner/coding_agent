@@ -628,7 +628,9 @@ class TestDiagnostics:
                     ],
                 },
             )
-            await asyncio.sleep(0.05)
+            # Single-step: server writes → client reads → stores sync in
+            # _handle_notification. A single yield is sufficient.
+            await asyncio.sleep(0)
             diags = client.get_diagnostics(str(f))
             assert len(diags) == 1
             assert diags[0]["message"] == "oops"
@@ -647,6 +649,11 @@ class TestServerRequests:
                 "workspace/configuration",
                 {"items": [{"section": "clangd"}, {"section": "other"}]},
             )
+            # Two-step pipeline: client's _read_loop reads the server request,
+            # then _handle_server_request (in a separate create_task) writes the
+            # reply, then _serve reads it. Each step is one event-loop cycle, so
+            # a single asyncio.sleep(0) is insufficient — we need the wall-clock
+            # yield to flush all three cycles.
             await asyncio.sleep(0.05)
             # Filter for client responses (have id but no method).
             responses = [
@@ -667,6 +674,7 @@ class TestServerRequests:
             await mock.send_request(
                 "client/registerCapability", {"registrations": []}
             )
+            # See workspace_configuration_acked — same two-step pipeline.
             await asyncio.sleep(0.05)
             responses = [
                 m for m in mock.sent_to_client
@@ -686,6 +694,7 @@ class TestServerRequests:
             mock.set_canned("initialize", {"capabilities": {}})
             await _start_wired(client, mock, pipe)
             await mock.send_request("totally/unknown", {})
+            # See workspace_configuration_acked — same two-step pipeline.
             await asyncio.sleep(0.05)
             responses = [
                 m for m in mock.sent_to_client
@@ -772,7 +781,8 @@ class TestClangdIntegration:
     """
 
     async def test_workspace_symbol_finds_main(self, tmp_path: Path) -> None:
-        (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+        main_cpp = tmp_path / "main.cpp"
+        main_cpp.write_text("int main() { return 0; }\n")
         client = ClangdClient(
             workspace_root=tmp_path,
             startup_timeout=20.0,
@@ -780,6 +790,9 @@ class TestClangdIntegration:
         )
         await client.start()
         try:
+            # Without a compile_commands.json, clangd only indexes files that
+            # have been explicitly opened. Open the file before querying.
+            await client.did_open(str(main_cpp), main_cpp.read_text())
             found = False
             for _ in range(40):
                 syms = await client.workspace_symbol("main")

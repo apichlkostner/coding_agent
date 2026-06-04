@@ -441,7 +441,7 @@ This is the minimum-invasive change.
 ## File summary
 
 | File | Change | LOC est. | Status |
-|---|---|---|---|---|
+|---|---|---|---|
 | `src/agent/lsp/__init__.py` | new | 15 | DONE |
 | `src/agent/lsp/framing.py` | new | 60 | DONE |
 | `src/agent/lsp/types.py` | new | 130 | DONE |
@@ -503,9 +503,9 @@ The `_build_writer` method uses a custom `WriteTransport` subclass that directly
 
 **Impact on tool tests (Step 5):** Tool tests that invoke notification-triggering tools (like `clangd_document_symbols` which calls `ensure_open` internally) will NOT need extra yields, because tool calls ultimately issue requests (which await a response and thus yield). Only tests that only send notifications without any subsequent request will hit this.
 
-#### 3. `mock.sent_to_client` tracks client→server messages, not server→client
+#### 3. `mock.sent_to_client` — name is opposite of what you'd expect
 
-Despite the name, `mock.sent_to_client` records every message the mock server *reads from the client* (via `server_reader`). This includes both client requests (e.g. `initialize` with `id=1`) and client responses to server-initiated requests (e.g. `{"id": 1001, "result": ...}`).
+The name `sent_to_client` is misleading: it actually records every message the mock server *reads from the client* (client→server direction). This includes both client requests (e.g. `initialize` with `id=1`) and client responses to server-initiated requests (e.g. `{"id": 1001, "result": ...}`). The name sounds like it should track server→client messages, but that's not what it holds.
 
 When writing assertions on client responses, filter for messages that have `"id"` but not `"method"`:
 
