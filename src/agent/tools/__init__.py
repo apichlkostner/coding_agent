@@ -1,6 +1,16 @@
 """tools package — tools for the agent."""
 
 from agent.tools.general import calculate, get_current_datetime
+from agent.tools.tools_clangd import (
+    clangd_call_hierarchy,
+    clangd_completion,
+    clangd_definition,
+    clangd_document_symbols,
+    clangd_references,
+    clangd_rename,
+    clangd_type_hierarchy,
+    clangd_workspace_symbols,
+)
 from agent.tools.tools_cmd import bash
 from agent.tools.tools_filesystem import (
     create_directory,
@@ -26,6 +36,14 @@ __all__ = [
     "get_current_datetime",
     "get_tools",
     "bash",
+    "clangd_call_hierarchy",
+    "clangd_completion",
+    "clangd_definition",
+    "clangd_document_symbols",
+    "clangd_rename",
+    "clangd_references",
+    "clangd_type_hierarchy",
+    "clangd_workspace_symbols",
     "create_directory",
     "grep",
     "list_directory",

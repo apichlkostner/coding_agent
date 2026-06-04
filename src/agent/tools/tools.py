@@ -21,7 +21,6 @@ Optional tools (enabled when the matching API key is set)
 
 from __future__ import annotations
 
-
 import os
 
 from langchain_core.tools import BaseTool
@@ -29,13 +28,21 @@ from langchain_core.tools import BaseTool
 from . import (
     bash,
     calculate,
+    clangd_call_hierarchy,
+    clangd_completion,
+    clangd_definition,
+    clangd_document_symbols,
+    clangd_references,
+    clangd_rename,
+    clangd_type_hierarchy,
+    clangd_workspace_symbols,
     create_directory,
     get_current_datetime,
     grep,
     list_directory,
     read_file,
-    replace_in_file,
     read_memory,
+    replace_in_file,
     send_notification,
     store_memory,
     treesitter_get_symbols,
@@ -85,6 +92,17 @@ def get_tools() -> list[BaseTool]:
         treesitter_parse,
         treesitter_query,
         treesitter_get_symbols,
+        # Language Server Protocol tools (require clangd on PATH).
+        # Listed lazily — the underlying singleton is started on first
+        # tool invocation, not at graph build time.
+        clangd_completion,
+        clangd_definition,
+        clangd_references,
+        clangd_document_symbols,
+        clangd_workspace_symbols,
+        clangd_rename,
+        clangd_type_hierarchy,
+        clangd_call_hierarchy,
     ]
 
     web_search = _make_web_search_tool()
