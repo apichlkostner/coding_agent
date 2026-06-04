@@ -449,16 +449,16 @@ This is the minimum-invasive change.
 | `src/agent/tools/tools_clangd.py` | new | 280 | DONE |
 | `src/agent/tools/__init__.py` | edit | +10 | DONE |
 | `src/agent/tools/tools.py` | edit | +12 | DONE |
-| `src/agent/__main__.py` | edit | +6 | TODO |
+| `src/agent/__main__.py` | edit | +10 | DONE |
 | `tests/test_lsp_client.py` | new | 450 | DONE (32 pass) |
 | `tests/test_lsp_tools.py` | new | 280 | DONE (16 pass) |
 | `tests/fixtures/lsp_cpp/` | new (4 files) | 80 | DONE |
 | `tests/conftest.py` | edit | +30 | DONE |
-| `README.md` | edit | +25 | TODO |
-| `docs/lsp_clangd.md` | new | 60 | TODO |
+| `README.md` | edit | +70 | DONE |
+| `docs/lsp_clangd.md` | new | 110 | DONE |
 | `pyproject.toml` | no change | 0 | — |
 
-Total new + changed: ~1 800 LOC. Steps 1–5 are done; Step 6–7 remain.
+Total new + changed: ~1 900 LOC. All steps done.
 
 ## Open Questions — Resolved
 

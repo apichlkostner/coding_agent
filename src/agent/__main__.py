@@ -131,9 +131,17 @@ def build_router(
 
 async def _run() -> None:
     """Async body of the application."""
-    settings = get_settings()
-    router = build_router(settings)
-    await router.run()
+    try:
+        settings = get_settings()
+        router = build_router(settings)
+        await router.run()
+    finally:
+        try:
+            from agent.lsp import reset_default_client
+
+            await reset_default_client()
+        except Exception:  # noqa: BLE001 - best-effort cleanup
+            logger.debug("clangd singleton cleanup failed", exc_info=True)
 
 
 def main() -> None:
