@@ -6,13 +6,10 @@ LangGraph's ``ToolNode`` discovers and executes them automatically.
 
 from __future__ import annotations
 
-import os
-import re
-import shlex
 import subprocess
 
-from langchain_core.tools import BaseTool, tool
-from pathlib import Path
+from langchain_core.tools import tool
+
 
 @tool
 def bash(command: str, timeout: int = 60, description: str = "") -> str:
@@ -31,7 +28,9 @@ def bash(command: str, timeout: int = 60, description: str = "") -> str:
         # no need to split the command, AI agent is allowed to call arbitrary commands
         # agent should run in a sandbox
         # TODO: permission system needed later
-        result = subprocess.run(command, timeout=timeout, shell=True, text=True, capture_output=True)
+        result = subprocess.run(
+            command, timeout=timeout, shell=True, text=True, capture_output=True
+        )
         return f"exit_code: {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
     except Exception as err:
         return f"Error: {err}"

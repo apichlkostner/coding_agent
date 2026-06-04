@@ -23,17 +23,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agent.config import Settings, get_llm, get_settings
-from agent.state import AgentState
-from agent.tools import calculate, get_current_datetime, get_tools
-from agent.tools_cmd import bash
-from agent.tools_filesystem import (
-    create_directory,
-    grep,
-    list_directory,
-    read_file,
-    replace_in_file,
-    write_file,
-)
+from agent.tools import *
 
 # ---------------------------------------------------------------------------
 # Tool tests — no LLM required
@@ -434,9 +424,9 @@ class TestTreeSitterTools:
 
     def test_parse_python_file(self) -> None:
         """Parsing a real project file should return a JSON tree with a module root."""
-        from agent.tools_treesitter import treesitter_parse
+        from agent.tools.tools_treesitter import treesitter_parse
 
-        result = treesitter_parse.invoke({"path": "src/agent/tools.py"})
+        result = treesitter_parse.invoke({"path": "src/agent/tools/tools.py"})
         assert not result.startswith("Error:")
         # The output may be truncated for large files; check the opening JSON fragment.
         assert result.lstrip().startswith("{")
@@ -448,7 +438,7 @@ class TestTreeSitterTools:
         """Parsing an inline Python snippet should produce a function_definition
         node.
         """
-        from agent.tools_treesitter import treesitter_parse
+        from agent.tools.tools_treesitter import treesitter_parse
 
         result = treesitter_parse.invoke(
             {"code": "def foo(): pass", "language": "python"}
@@ -458,7 +448,7 @@ class TestTreeSitterTools:
 
     def test_parse_unsupported_language_returns_error(self) -> None:
         """An unknown language name must return an Error string."""
-        from agent.tools_treesitter import treesitter_parse
+        from agent.tools.tools_treesitter import treesitter_parse
 
         result = treesitter_parse.invoke({"code": "test", "language": "cobol"})
         assert result.startswith("Error:")
@@ -466,14 +456,14 @@ class TestTreeSitterTools:
 
     def test_parse_path_outside_project_returns_error(self) -> None:
         """Paths outside the project root must be rejected."""
-        from agent.tools_treesitter import treesitter_parse
+        from agent.tools.tools_treesitter import treesitter_parse
 
         result = treesitter_parse.invoke({"path": "/etc/passwd"})
         assert result.startswith("Error:")
 
     def test_parse_max_depth_respected(self) -> None:
         """Depth-0 parse should render the root as a leaf with a text field."""
-        from agent.tools_treesitter import treesitter_parse
+        from agent.tools.tools_treesitter import treesitter_parse
 
         result = treesitter_parse.invoke(
             {"code": "x = 1", "language": "python", "max_depth": 0}
@@ -488,7 +478,7 @@ class TestTreeSitterTools:
 
     def test_query_captures_function_names(self) -> None:
         """A function-name query should return both defined function names."""
-        from agent.tools_treesitter import treesitter_query
+        from agent.tools.tools_treesitter import treesitter_query
 
         result = treesitter_query.invoke(
             {
@@ -503,12 +493,12 @@ class TestTreeSitterTools:
 
     def test_query_on_file(self) -> None:
         """A query against a real file should return at least one match."""
-        from agent.tools_treesitter import treesitter_query
+        from agent.tools.tools_treesitter import treesitter_query
 
         result = treesitter_query.invoke(
             {
                 "query_pattern": "(function_definition name: (identifier) @fn_name)",
-                "path": "src/agent/tools.py",
+                "path": "src/agent/tools/general.py",
             }
         )
         assert not result.startswith("Error:")
@@ -516,7 +506,7 @@ class TestTreeSitterTools:
 
     def test_query_invalid_pattern_returns_error(self) -> None:
         """A malformed query pattern must return an Error string."""
-        from agent.tools_treesitter import treesitter_query
+        from agent.tools.tools_treesitter import treesitter_query
 
         result = treesitter_query.invoke(
             {
@@ -531,26 +521,26 @@ class TestTreeSitterTools:
 
     def test_get_symbols_python_file(self) -> None:
         """Symbol extraction on a project Python file must include known functions."""
-        from agent.tools_treesitter import treesitter_get_symbols
+        from agent.tools.tools_treesitter import treesitter_get_symbols
 
-        result = treesitter_get_symbols.invoke({"path": "src/agent/tools.py"})
+        result = treesitter_get_symbols.invoke({"path": "src/agent/tools/tools.py"})
         assert not result.startswith("Error:")
         assert "calculate" in result
         assert "get_current_datetime" in result
 
     def test_get_symbols_inline_rust(self) -> None:
         """Symbol extraction on inline Rust code must return a function entry."""
-        from agent.tools_treesitter import treesitter_get_symbols
+        from agent.tools.tools_treesitter import treesitter_get_symbols
 
         result = treesitter_get_symbols.invoke(
-            {"code": "fn main() { println!(\"hello\"); }", "language": "rust"}
+            {"code": 'fn main() { println!("hello"); }', "language": "rust"}
         )
         assert not result.startswith("Error:")
         assert "main" in result
 
     def test_get_symbols_no_query_for_language_returns_error(self) -> None:
         """A language with no pre-built symbol query must return an Error string."""
-        from agent.tools_treesitter import (
+        from agent.tools.tools_treesitter import (
             _SYMBOL_QUERIES,
             treesitter_get_symbols,
         )
@@ -569,7 +559,7 @@ class TestTreeSitterTools:
 
     def test_get_symbols_excludes_nested_symbols(self) -> None:
         """Symbols nested inside a function body must not appear in the result."""
-        from agent.tools_treesitter import treesitter_get_symbols
+        from agent.tools.tools_treesitter import treesitter_get_symbols
 
         code = "def outer():\n    def inner():\n        pass\n"
         result = treesitter_get_symbols.invoke({"code": code, "language": "python"})
@@ -581,7 +571,7 @@ class TestTreeSitterTools:
 
     def test_get_symbols_line_numbers_are_one_based(self) -> None:
         """start_line / end_line must use 1-based indexing."""
-        from agent.tools_treesitter import treesitter_get_symbols
+        from agent.tools.tools_treesitter import treesitter_get_symbols
 
         # Single function on lines 1-2 of the snippet.
         code = "def foo():\n    pass\n"
@@ -600,4 +590,3 @@ class TestTreeSitterTools:
         assert "treesitter_parse" in names
         assert "treesitter_query" in names
         assert "treesitter_get_symbols" in names
-

@@ -29,7 +29,7 @@ from typing import Any
 from langchain_core.tools import tool
 from tree_sitter import Language, Node, Parser, Query, QueryCursor
 
-from agent.tools_filesystem import _is_subpath
+from agent.tools.tools_filesystem import _is_subpath
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -238,8 +238,7 @@ def _get_language(language_name: str) -> Language:
     if factory is None:
         available = sorted(_LANGUAGE_FACTORIES.keys())
         raise ValueError(
-            f"Unsupported language: '{language_name}'. "
-            f"Available: {available}"
+            f"Unsupported language: '{language_name}'. Available: {available}"
         )
     return Language(factory())
 
