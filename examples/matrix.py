@@ -25,6 +25,7 @@ async def main() -> None:
     config = AsyncClientConfig(store_sync_tokens=True)
     client = AsyncClient(
         home_server,
+        user=user_id,
         store_path="./nio_store",
         config=config,
     )
@@ -79,6 +80,12 @@ async def main() -> None:
     client.add_event_callback(message_callback, RoomMessageText)
     client.add_event_callback(invite_callback, InviteMemberEvent)
     client.add_event_callback(decryption_failure_callback, MegolmEvent)
+
+    # print(client.device_id)
+    # print(client.user_id)
+    # print(client.store)
+    # print(client.olm)
+    # print(len(client.olm.account.shared))
 
     print(f"Logged in as: {client.user_id}")
     print("Listening for messages...")

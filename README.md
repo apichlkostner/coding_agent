@@ -183,9 +183,14 @@ src/agent/
 ├── graph.py                 # LangGraph StateGraph assembly
 ├── nodes.py                 # Graph node functions (call_model)
 ├── state.py                 # AgentState TypedDict
-├── tools.py                 # Core tools (calculate, datetime, web search)
-├── tools_filesystem.py      # Filesystem tools (read/write/list/grep/replace)
-├── tools_cmd.py             # Shell tool (bash)
+│
+├── tools/                   # Tool implementations
+│   ├── __init__.py          # Re-exports all tool functions
+│   ├── general.py           # Core tools (calculate, datetime)
+│   ├── tools.py             # get_tools() aggregator + web_search
+│   ├── tools_filesystem.py  # Filesystem tools (read/write/list/grep/replace)
+│   ├── tools_cmd.py         # Shell tool (bash)
+│   └── tools_treesitter.py  # Tree-sitter parsing & query tools
 │
 ├── router/                  # Routing layer
 │   ├── messages.py          # InboundMessage / OutboundMessage dataclasses
@@ -259,19 +264,19 @@ The `agent` node prepends a system prompt (with today's date) and calls the LLM 
 
 | Tool | Module | Description |
 |---|---|---|
-| `calculate` | `tools.py` | Safe AST-based arithmetic evaluator |
-| `get_current_datetime` | `tools.py` | Current UTC time as ISO-8601 |
-| `web_search` | `tools.py` | Tavily web search (requires `TAVILY_API_KEY`) |
-| `read_file` | `tools_filesystem.py` | Read a file with optional line offset/count |
-| `write_file` | `tools_filesystem.py` | Write (or overwrite) a file |
-| `list_directory` | `tools_filesystem.py` | List directory contents with entry types |
-| `create_directory` | `tools_filesystem.py` | Create a directory (mkdir -p) |
-| `replace_in_file` | `tools_filesystem.py` | Replace a string inside a file |
-| `grep` | `tools_filesystem.py` | Regex search across files in a directory |
-| `bash` | `tools_cmd.py` | Run an arbitrary shell command |
-| `treesitter_parse` | `tools_treesitter.py` | Parse a source file or code string into a JSON syntax tree (bounded by depth and character limit) |
-| `treesitter_query` | `tools_treesitter.py` | Run a tree-sitter S-expression query against a source file or code string; returns matched captures as JSON |
-| `treesitter_get_symbols` | `tools_treesitter.py` | Extract top-level symbols (functions, classes, imports) from a source file using built-in per-language queries |
+| `calculate` | `tools/general.py` | Safe AST-based arithmetic evaluator |
+| `get_current_datetime` | `tools/general.py` | Current UTC time as ISO-8601 |
+| `web_search` | `tools/tools.py` | Tavily web search (requires `TAVILY_API_KEY`) |
+| `read_file` | `tools/tools_filesystem.py` | Read a file with optional line offset/count |
+| `write_file` | `tools/tools_filesystem.py` | Write (or overwrite) a file |
+| `list_directory` | `tools/tools_filesystem.py` | List directory contents with entry types |
+| `create_directory` | `tools/tools_filesystem.py` | Create a directory (mkdir -p) |
+| `replace_in_file` | `tools/tools_filesystem.py` | Replace a string inside a file |
+| `grep` | `tools/tools_filesystem.py` | Regex search across files in a directory |
+| `bash` | `tools/tools_cmd.py` | Run an arbitrary shell command |
+| `treesitter_parse` | `tools/tools_treesitter.py` | Parse a source file or code string into a JSON syntax tree (bounded by depth and character limit) |
+| `treesitter_query` | `tools/tools_treesitter.py` | Run a tree-sitter S-expression query against a source file or code string; returns matched captures as JSON |
+| `treesitter_get_symbols` | `tools/tools_treesitter.py` | Extract top-level symbols (functions, classes, imports) from a source file using built-in per-language queries |
 
 All filesystem and shell tools restrict access to paths inside the project working directory.
 
@@ -349,7 +354,7 @@ No other files need to change.
 
 ## Adding Tools
 
-Define a new tool using the `@tool` decorator in the appropriate module, then include it in the list returned by `get_tools()` in `tools.py`:
+Define a new tool using the `@tool` decorator in the appropriate module, then include it in the list returned by `get_tools()` in `tools/tools.py`:
 
 ```python
 from langchain_core.tools import tool
@@ -372,3 +377,18 @@ result = graph.invoke(
 )
 print(result["messages"][-1].content)
 ```
+## Lessons learned
+
+### Matrix
+
+Perform an initial login using username/password to obtain a stable `access_token` and `device_id`. Persist both values and reuse them on subsequent runs instead of re-authenticating.
+
+After the first successful login, initialize the client using the stored credentials:
+
+- `access_token`
+- `device_id`
+- persistent `store_path` (e.g. `./nio_store`)
+
+Do not call `login()` on every startup; reuse the saved session to ensure E2EE continuity.
+
+See `example/matrix.py` for a reference implementation.

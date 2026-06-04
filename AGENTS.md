@@ -9,9 +9,21 @@ This project is a coding agent with connection to messengers and terminal interf
 
 - Built with LangGraph and LangChain
 - Uses `uv` for dependency management
-- Tests live in `tests/test_agent.py` and can be run with `uv run pytest`
+- Tests can be run with `uv run pytest`
 - Main entry point is `src/agent/__main__.py`
 - See `README.md` for full setup and usage instructions
+
+## Project structure
+
+Sources: ./src/agent/
+Adapter for messenger or terminal: ./src/agent/adapters/
+Message router: ./src/agent/router/
+Agent tools: ./src/agent/tools/
+
+Tests: ./tests
+Examples: ./examples
+Documentation: ./docs
+
 
 ## Python
 
