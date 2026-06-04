@@ -523,7 +523,7 @@ class TestTreeSitterTools:
         """Symbol extraction on a project Python file must include known functions."""
         from agent.tools.tools_treesitter import treesitter_get_symbols
 
-        result = treesitter_get_symbols.invoke({"path": "src/agent/tools/tools.py"})
+        result = treesitter_get_symbols.invoke({"path": "src/agent/tools/general.py"})
         assert not result.startswith("Error:")
         assert "calculate" in result
         assert "get_current_datetime" in result
