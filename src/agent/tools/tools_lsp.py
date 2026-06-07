@@ -12,6 +12,7 @@ from agent.lsp import ServerSpec, WorkspaceContext, get_client_manager
 from agent.tools.tools_filesystem import _is_subpath
 
 OUTPUT_CHAR_LIMIT = 8_000
+DIAGNOSTICS_TIMEOUT_SECONDS = 2.5
 
 _SYMBOL_KIND_NAMES: dict[int, str] = {
     1: "file",
@@ -316,7 +317,9 @@ async def lsp_diagnostics(path: str) -> str:
         if not diagnostics:
             try:
                 diagnostics = await client.await_diagnostics(
-                    resolved, timeout=1.0, after_generation=generation
+                    resolved,
+                    timeout=DIAGNOSTICS_TIMEOUT_SECONDS,
+                    after_generation=generation,
                 )
             except TimeoutError:
                 diagnostics = client.get_diagnostics(resolved)

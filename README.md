@@ -321,6 +321,7 @@ The six `lsp_*` tools speak the Language Server Protocol over stdio to a backend
 **Behaviour:**
 
 - Clients are started lazily per backend and workspace root, then reused until the agent exits.
+- The generic LSP surface intentionally excludes completion, call hierarchy, and type hierarchy; the supported tool set is limited to definition, references, symbols, rename planning, and diagnostics.
 - `lsp_workspace_symbols` requires a `path` anchor so the agent can choose the correct backend and project root.
 - Python requests prefer a project-local interpreter from `.venv`, `venv`, or `env`, then fall back to the running interpreter.
 - Input positions use **1-based line numbers** and **0-based character offsets** (matching `treesitter_get_symbols` and editor grep conventions). Outputs convert LSP's 0-based positions to 1-based.

@@ -19,11 +19,14 @@ import pytest
 from agent.lsp import (
     LanguageServerClientManager,
     LanguageServerClient,
+    ServerSpec,
+    WorkspaceContext,
     detect_workspace_context,
     get_server_spec_for_path,
     path_to_uri,
     uri_to_path,
 )
+from agent.lsp.registry import _configure_client
 from agent.lsp.framing import (
     LSPProtocolError,
     read_message,
@@ -397,6 +400,15 @@ class _FakeManagedClient:
         self.stopped = True
 
 
+class _FakeConfigurableClient(_FakeManagedClient):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.configuration_changes: list[dict[str, Any]] = []
+
+    async def did_change_configuration(self, settings: dict[str, Any]) -> None:
+        self.configuration_changes.append(settings)
+
+
 class TestLanguageServerClientManager:
     async def test_manager_reuses_same_backend_root_client(
         self, tmp_path: Path
@@ -442,6 +454,27 @@ class TestLanguageServerClientManager:
         assert len(_FakeManagedClient.created) == 2
         assert all(client.started for client in _FakeManagedClient.created)
         assert all(client.stopped for client in _FakeManagedClient.created)
+
+    async def test_configure_client_uses_spec_configuration_builder(
+        self, tmp_path: Path
+    ) -> None:
+        client = _FakeConfigurableClient()
+        context = WorkspaceContext(
+            path=tmp_path / "main.py",
+            language="python",
+            workspace_root=tmp_path,
+        )
+        spec = ServerSpec(
+            server_id="custom",
+            language_id="python",
+            file_extensions=frozenset({".py"}),
+            root_markers=("pyproject.toml",),
+            configuration_builder=lambda _context: {"custom": {"enabled": True}},
+        )
+
+        await _configure_client(client, spec, context)
+
+        assert client.configuration_changes == [{"custom": {"enabled": True}}]
 
 
 class TestInitializeHandshake:

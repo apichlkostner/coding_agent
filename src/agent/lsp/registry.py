@@ -6,6 +6,7 @@ import asyncio
 import os
 import sys
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,9 @@ class ServerSpec:
     language_id: str
     file_extensions: frozenset[str]
     root_markers: tuple[str, ...]
+    configuration_builder: (
+        Callable[[WorkspaceContext], dict[str, Any] | None] | None
+    ) = None
 
     def command(self, context: WorkspaceContext) -> tuple[str, ...]:
         if self.server_id == "clangd":
@@ -74,6 +78,7 @@ _SERVER_SPECS: tuple[ServerSpec, ...] = (
             ".venv",
             ".git",
         ),
+        configuration_builder=lambda context: _build_pyright_configuration(context),
     ),
     ServerSpec(
         server_id="clangd",
@@ -123,6 +128,12 @@ def _has_tool_pyright(pyproject_path: Path) -> bool:
     return isinstance(tool, dict) and "pyright" in tool
 
 
+def _workspace_has_pyright_config(workspace_root: Path) -> bool:
+    return (workspace_root / "pyrightconfig.json").is_file() or _has_tool_pyright(
+        workspace_root / "pyproject.toml"
+    )
+
+
 def _detect_python_environment(workspace_root: Path) -> tuple[Path | None, Path | None]:
     for env_dir_name in (".venv", "venv", "env"):
         env_dir = workspace_root / env_dir_name
@@ -150,16 +161,29 @@ def _build_pyright_settings(context: WorkspaceContext) -> dict[str, Any]:
     return settings
 
 
+def _build_pyright_configuration(
+    context: WorkspaceContext,
+) -> dict[str, Any] | None:
+    if context.has_pyright_config or _workspace_has_pyright_config(
+        context.workspace_root
+    ):
+        return None
+    return _build_pyright_settings(context)
+
+
 async def _configure_client(
     client: LanguageServerClient,
     spec: ServerSpec,
     context: WorkspaceContext,
 ) -> None:
-    if spec.server_id != "pyright" or context.has_pyright_config:
-        return
     if not hasattr(client, "did_change_configuration"):
         return
-    await client.did_change_configuration(_build_pyright_settings(context))
+    if spec.configuration_builder is None:
+        return
+    settings = spec.configuration_builder(context)
+    if settings is None:
+        return
+    await client.did_change_configuration(settings)
 
 
 def get_server_spec_for_path(
@@ -202,9 +226,7 @@ def detect_workspace_context(
     has_pyright_config = False
     if spec.server_id == "pyright":
         python_executable, python_venv_path = _detect_python_environment(workspace_root)
-        has_pyright_config = (
-            workspace_root / "pyrightconfig.json"
-        ).is_file() or _has_tool_pyright(workspace_root / "pyproject.toml")
+        has_pyright_config = _workspace_has_pyright_config(workspace_root)
 
     context = WorkspaceContext(
         path=resolved_path,
