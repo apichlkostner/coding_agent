@@ -30,7 +30,7 @@
   // Post-create: install all Python dependencies (including dev group).
   // uv reads pyproject.toml and writes a .venv inside the workspace.
   // ---------------------------------------------------------------------------
-  "postCreateCommand": "uv sync --all-groups",
+  "postCreateCommand": "uv sync --all-groups && rtk init --copilot",
 
   "remoteEnv": {
     "OLLAMA_BASE_URL": "http://host.docker.internal:11434"
@@ -52,7 +52,8 @@
         // TOML editing (pyproject.toml)
         "tamasfe.even-better-toml",
         // Dotenv file highlighting
-        "mikestead.dotenv"
+        "mikestead.dotenv",
+        "GitHub.copilot-chat"
       ],
       "settings": {
         // Point the Python extension at the uv-managed virtual environment.

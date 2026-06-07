@@ -7,6 +7,8 @@ FROM mcr.microsoft.com/devcontainers/python:3.12-trixie
 ARG NODE_VERSION="lts/*"
 RUN su vscode -c "source /usr/local/share/nvm/nvm.sh && nvm install ${NODE_VERSION} 2>&1"
 
+
+
 # ---------------------------------------------------------------------------
 # uv — fast Python package manager
 # Copied directly from the official uv image so the version is pinned to
@@ -15,9 +17,12 @@ RUN su vscode -c "source /usr/local/share/nvm/nvm.sh && nvm install ${NODE_VERSI
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # ---------------------------------------------------------------------------
-# pi coding agent — installed globally under the vscode user's active Node
+# additional installs
 # ---------------------------------------------------------------------------
 RUN su vscode -c " \
     source /usr/local/share/nvm/nvm.sh && \
     npm install -g @earendil-works/pi-coding-agent \
+    npm install -g opencode-ai \
+    npm install -g pyright \
+    cargo install --git https://github.com/rtk-ai/rtk \
 "
