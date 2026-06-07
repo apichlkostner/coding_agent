@@ -28,18 +28,16 @@ from langchain_core.tools import BaseTool
 from . import (
     bash,
     calculate,
-    clangd_call_hierarchy,
-    clangd_completion,
-    clangd_definition,
-    clangd_document_symbols,
-    clangd_references,
-    clangd_rename,
-    clangd_type_hierarchy,
-    clangd_workspace_symbols,
     create_directory,
     get_current_datetime,
     grep,
     list_directory,
+    lsp_definition,
+    lsp_diagnostics,
+    lsp_document_symbols,
+    lsp_references,
+    lsp_rename,
+    lsp_workspace_symbols,
     read_file,
     read_memory,
     replace_in_file,
@@ -92,17 +90,12 @@ def get_tools() -> list[BaseTool]:
         treesitter_parse,
         treesitter_query,
         treesitter_get_symbols,
-        # Language Server Protocol tools (require clangd on PATH).
-        # Listed lazily — the underlying singleton is started on first
-        # tool invocation, not at graph build time.
-        clangd_completion,
-        clangd_definition,
-        clangd_references,
-        clangd_document_symbols,
-        clangd_workspace_symbols,
-        clangd_rename,
-        clangd_type_hierarchy,
-        clangd_call_hierarchy,
+        lsp_definition,
+        lsp_references,
+        lsp_document_symbols,
+        lsp_workspace_symbols,
+        lsp_rename,
+        lsp_diagnostics,
     ]
 
     web_search = _make_web_search_tool()

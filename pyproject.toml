@@ -23,6 +23,7 @@ dependencies = [
     "tree-sitter-go>=0.25.0",
     "tree-sitter-c>=0.24.2",
     "tree-sitter-cpp>=0.23.4",
+    "pyright>=1.1.410",
 ]
 
 [project.scripts]

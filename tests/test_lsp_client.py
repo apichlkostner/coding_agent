@@ -1,4 +1,4 @@
-"""Tests for the :class:`agent.lsp.ClangdClient` and its framing layer.
+"""Tests for the :class:`agent.lsp.LanguageServerClient` and its framing layer.
 
 The tests run without a real ``clangd`` binary: an in-process mock
 server exchanges LSP messages over ``asyncio`` pipes with the client,
@@ -17,7 +17,10 @@ from unittest.mock import patch
 import pytest
 
 from agent.lsp import (
-    ClangdClient,
+    LanguageServerClientManager,
+    LanguageServerClient,
+    detect_workspace_context,
+    get_server_spec_for_path,
     path_to_uri,
     uri_to_path,
 )
@@ -189,7 +192,7 @@ class TestFraming:
 class MockLspServer:
     """In-process mock LSP server.
 
-    Drives a :class:`ClangdClient` over an in-memory stdio pair. The
+    Drives a :class:`LanguageServerClient` over an in-memory stdio pair. The
     mock auto-responds to ``initialize``/``initialized`` and lets tests
     register canned responses keyed by JSON-RPC ``method``.  Server
     notifications and requests are recorded and exposed for assertions.
@@ -215,9 +218,7 @@ class MockLspServer:
         msg = {"jsonrpc": "2.0", "method": method, "params": params}
         await write_message(self.client_streams.server_writer, msg)
 
-    async def send_request(
-        self, method: str, params: Any
-    ) -> int:
+    async def send_request(self, method: str, params: Any) -> int:
         """Push a server-to-client request; returns the request id."""
         assert self.client_streams is not None
         self._next_id += 1
@@ -273,16 +274,16 @@ class MockLspServer:
 
 def _wire_client_with_mock(
     tmp_path: Path, **client_kwargs: Any
-) -> tuple[ClangdClient, MockLspServer, _BidiClientPipe]:
+) -> tuple[LanguageServerClient, MockLspServer, _BidiClientPipe]:
     pipe = _BidiClientPipe()
     mock = MockLspServer()
     mock.client_streams = pipe
-    client = ClangdClient(workspace_root=tmp_path, **client_kwargs)
+    client = LanguageServerClient(workspace_root=tmp_path, **client_kwargs)
     return client, mock, pipe
 
 
 async def _start_wired(
-    client: ClangdClient, mock: MockLspServer, pipe: _BidiClientPipe
+    client: LanguageServerClient, mock: MockLspServer, pipe: _BidiClientPipe
 ) -> None:
     """Attach the pipe to the client, start the mock server, and handshake."""
     client._attach_pipes(
@@ -321,6 +322,128 @@ class TestUriHelpers:
             uri_to_path("https://example.com/x.cpp")
 
 
+class TestRegistryWorkspaceDetection:
+    def test_py_resolves_to_pyright(self, tmp_path: Path) -> None:
+        target = tmp_path / "pkg" / "module.py"
+        target.parent.mkdir(parents=True)
+        target.write_text("value = 1\n")
+
+        spec = get_server_spec_for_path(target)
+
+        assert spec.server_id == "pyright"
+
+    def test_cpp_resolves_to_clangd(self, tmp_path: Path) -> None:
+        target = tmp_path / "src" / "main.cpp"
+        target.parent.mkdir(parents=True)
+        target.write_text("int main() { return 0; }\n")
+
+        spec = get_server_spec_for_path(target)
+
+        assert spec.server_id == "clangd"
+
+    def test_nearest_language_specific_root_wins_over_outer_git(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        inner = tmp_path / "services" / "pyproj"
+        inner.mkdir(parents=True)
+        (inner / "pyproject.toml").write_text("[project]\nname='demo'\n")
+        target = inner / "app.py"
+        target.write_text("print('hi')\n")
+
+        spec, context = detect_workspace_context(target)
+
+        assert spec.server_id == "pyright"
+        assert context.workspace_root == inner
+
+    def test_python_interpreter_prefers_local_dot_venv(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
+        interpreter = tmp_path / ".venv" / "bin" / "python"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_text("#!/usr/bin/env python3\n")
+        target = tmp_path / "main.py"
+        target.write_text("print('hi')\n")
+
+        _, context = detect_workspace_context(target)
+
+        assert context.python_executable == interpreter
+        assert context.python_venv_path == tmp_path / ".venv"
+
+    def test_pyproject_tool_pyright_sets_config_flag(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname='demo'\n\n[tool.pyright]\ntypeCheckingMode='standard'\n"
+        )
+        target = tmp_path / "main.py"
+        target.write_text("print('hi')\n")
+
+        _, context = detect_workspace_context(target)
+
+        assert context.has_pyright_config is True
+
+
+class _FakeManagedClient:
+    created: list["_FakeManagedClient"] = []
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+        self.started = False
+        self.stopped = False
+        self.__class__.created.append(self)
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
+class TestLanguageServerClientManager:
+    async def test_manager_reuses_same_backend_root_client(
+        self, tmp_path: Path
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname='demo'\n")
+        target = tmp_path / "app.py"
+        target.write_text("print('hi')\n")
+        manager = LanguageServerClientManager()
+        _FakeManagedClient.created.clear()
+
+        with patch("agent.lsp.registry.LanguageServerClient", _FakeManagedClient):
+            client1, spec1, context1 = await manager.get_client_for_path(target)
+            client2, spec2, context2 = await manager.get_client_for_path(target)
+
+        assert client1 is client2
+        assert spec1.server_id == spec2.server_id == "pyright"
+        assert context1.workspace_root == context2.workspace_root == tmp_path
+        assert len(_FakeManagedClient.created) == 1
+        assert _FakeManagedClient.created[0].started is True
+
+    async def test_manager_reset_stops_all_pooled_clients(self, tmp_path: Path) -> None:
+        py_root = tmp_path / "pyproj"
+        py_root.mkdir()
+        (py_root / "pyproject.toml").write_text("[project]\nname='demo'\n")
+        py_file = py_root / "app.py"
+        py_file.write_text("print('hi')\n")
+
+        cpp_root = tmp_path / "cppproj"
+        cpp_root.mkdir()
+        (cpp_root / ".clangd").write_text("CompileFlags:\n")
+        cpp_file = cpp_root / "main.cpp"
+        cpp_file.write_text("int main() { return 0; }\n")
+
+        manager = LanguageServerClientManager()
+        _FakeManagedClient.created.clear()
+
+        with patch("agent.lsp.registry.LanguageServerClient", _FakeManagedClient):
+            await manager.get_client_for_path(py_file)
+            await manager.get_client_for_path(cpp_file)
+            await manager.reset()
+
+        assert len(_FakeManagedClient.created) == 2
+        assert all(client.started for client in _FakeManagedClient.created)
+        assert all(client.stopped for client in _FakeManagedClient.created)
+
+
 class TestInitializeHandshake:
     async def test_initialize_sends_root_uri_and_capabilities(
         self, workspace: Path
@@ -341,9 +464,7 @@ class TestInitializeHandshake:
             pipe.close()
 
     async def test_initialize_timeout_raises(self, workspace: Path) -> None:
-        client, mock, pipe = _wire_client_with_mock(
-            workspace, startup_timeout=0.2
-        )
+        client, mock, pipe = _wire_client_with_mock(workspace, startup_timeout=0.2)
         try:
             mock.set_delay(1.0)
             with pytest.raises((asyncio.TimeoutError, OSError)):
@@ -605,7 +726,55 @@ class TestDocumentLifecycle:
             await client.ensure_open(str(f))
             await client.document_symbol(str(f))
             notifs = mock.requests_by_method.get("textDocument/didOpen", [])
-            assert notifs and notifs[0]["params"]["textDocument"]["text"] == "void a() {}\n"
+            assert (
+                notifs
+                and notifs[0]["params"]["textDocument"]["text"] == "void a() {}\n"
+            )
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_sync_document_sends_did_open_on_first_access(
+        self, workspace: Path
+    ) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            f = workspace / "a.cpp"
+            f.write_text("int x;\n")
+
+            changed = await client.sync_document(str(f))
+            await asyncio.sleep(0)
+
+            assert changed is True
+            notifs = mock.requests_by_method.get("textDocument/didOpen", [])
+            assert len(notifs) == 1
+            assert notifs[0]["params"]["textDocument"]["text"] == "int x;\n"
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_sync_document_sends_did_change_only_on_content_drift(
+        self, workspace: Path
+    ) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            f = workspace / "a.cpp"
+            f.write_text("int x;\n")
+
+            assert await client.sync_document(str(f)) is True
+            assert await client.sync_document(str(f)) is False
+            f.write_text("int y;\n")
+            assert await client.sync_document(str(f)) is True
+            await asyncio.sleep(0)
+
+            notifs = mock.requests_by_method.get("textDocument/didChange", [])
+            assert len(notifs) == 1
+            assert notifs[0]["params"]["textDocument"]["version"] == 2
+            assert notifs[0]["params"]["contentChanges"] == [{"text": "int y;\n"}]
         finally:
             await client.stop()
             pipe.close()
@@ -623,9 +792,7 @@ class TestDiagnostics:
                 "textDocument/publishDiagnostics",
                 {
                     "uri": path_to_uri(f),
-                    "diagnostics": [
-                        {"range": {}, "severity": 1, "message": "oops"}
-                    ],
+                    "diagnostics": [{"range": {}, "severity": 1, "message": "oops"}],
                 },
             )
             # Single-step: server writes → client reads → stores sync in
@@ -634,6 +801,39 @@ class TestDiagnostics:
             diags = client.get_diagnostics(str(f))
             assert len(diags) == 1
             assert diags[0]["message"] == "oops"
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_await_diagnostics_wakes_waiters(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            f = workspace / "a.cpp"
+            f.write_text("int x;\n")
+
+            generation = client.diagnostics_generation(str(f))
+            waiter = asyncio.create_task(
+                client.await_diagnostics(
+                    str(f), timeout=1.0, after_generation=generation
+                )
+            )
+            await asyncio.sleep(0)
+            await mock.send_notification(
+                "textDocument/publishDiagnostics",
+                {
+                    "uri": path_to_uri(f),
+                    "diagnostics": [
+                        {"range": {}, "severity": 1, "message": "oops again"}
+                    ],
+                },
+            )
+
+            diags = await waiter
+            assert len(diags) == 1
+            assert diags[0]["message"] == "oops again"
+            assert client.diagnostics_generation(str(f)) == generation + 1
         finally:
             await client.stop()
             pipe.close()
@@ -657,7 +857,8 @@ class TestServerRequests:
             await asyncio.sleep(0.05)
             # Filter for client responses (have id but no method).
             responses = [
-                m for m in mock.sent_to_client
+                m
+                for m in mock.sent_to_client
                 if m.get("id") is not None and "method" not in m
             ]
             assert len(responses) == 1
@@ -671,13 +872,12 @@ class TestServerRequests:
         try:
             mock.set_canned("initialize", {"capabilities": {}})
             await _start_wired(client, mock, pipe)
-            await mock.send_request(
-                "client/registerCapability", {"registrations": []}
-            )
+            await mock.send_request("client/registerCapability", {"registrations": []})
             # See workspace_configuration_acked — same two-step pipeline.
             await asyncio.sleep(0.05)
             responses = [
-                m for m in mock.sent_to_client
+                m
+                for m in mock.sent_to_client
                 if m.get("id") is not None and "method" not in m
             ]
             assert len(responses) == 1
@@ -697,7 +897,8 @@ class TestServerRequests:
             # See workspace_configuration_acked — same two-step pipeline.
             await asyncio.sleep(0.05)
             responses = [
-                m for m in mock.sent_to_client
+                m
+                for m in mock.sent_to_client
                 if m.get("id") is not None and "method" not in m
             ]
             assert len(responses) == 1
@@ -749,16 +950,14 @@ class TestStop:
             pipe.close()
 
 
-class TestClangdMissing:
-    async def test_start_raises_when_clangd_not_found(
-        self, workspace: Path
-    ) -> None:
-        client = ClangdClient(
-            clangd_path="definitely_not_clangd_xyz",
+class TestLanguageServerMissing:
+    async def test_start_raises_when_server_not_found(self, workspace: Path) -> None:
+        client = LanguageServerClient(
+            command=("definitely_not_language_server_xyz",),
             workspace_root=workspace,
         )
         with patch("agent.lsp.client.shutil.which", return_value=None):
-            with pytest.raises(FileNotFoundError, match="clangd not found"):
+            with pytest.raises(FileNotFoundError, match="language server not found"):
                 await client.start()
 
 
@@ -770,9 +969,7 @@ class TestClangdMissing:
 CLANGD_AVAILABLE = shutil.which("clangd") is not None
 
 
-@pytest.mark.skipif(
-    not CLANGD_AVAILABLE, reason="clangd binary not installed"
-)
+@pytest.mark.skipif(not CLANGD_AVAILABLE, reason="clangd binary not installed")
 @pytest.mark.integration
 class TestClangdIntegration:
     """Real end-to-end tests against the system clangd.
@@ -783,7 +980,7 @@ class TestClangdIntegration:
     async def test_workspace_symbol_finds_main(self, tmp_path: Path) -> None:
         main_cpp = tmp_path / "main.cpp"
         main_cpp.write_text("int main() { return 0; }\n")
-        client = ClangdClient(
+        client = LanguageServerClient(
             workspace_root=tmp_path,
             startup_timeout=20.0,
             request_timeout=15.0,
@@ -803,4 +1000,3 @@ class TestClangdIntegration:
             assert found, f"clangd did not index 'main' in time: {syms!r}"
         finally:
             await client.stop()
-

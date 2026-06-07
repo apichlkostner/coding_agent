@@ -137,11 +137,12 @@ async def _run() -> None:
         await router.run()
     finally:
         try:
-            from agent.lsp import reset_default_client
+            from agent.lsp import reset_client_manager, reset_default_client
 
+            await reset_client_manager()
             await reset_default_client()
         except Exception:  # noqa: BLE001 - best-effort cleanup
-            logger.debug("clangd singleton cleanup failed", exc_info=True)
+            logger.debug("LSP client cleanup failed", exc_info=True)
 
 
 def main() -> None:

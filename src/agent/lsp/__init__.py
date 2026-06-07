@@ -2,7 +2,8 @@
 
 Public API
 ----------
-- :class:`ClangdClient` — async client that drives a ``clangd`` subprocess.
+- :class:`LanguageServerClient` — async client that drives a language-server subprocess.
+- :class:`ClangdClient` — backward-compatible alias for the default C/C++ client type.
 - :func:`get_default_client` — process-wide singleton accessor (lazy start).
 - :func:`reset_default_client` — stop and clear the singleton.
 - :func:`path_to_uri` / :func:`uri_to_path` — path/URI conversions.
@@ -12,6 +13,7 @@ Public API
 
 from agent.lsp.client import (
     ClangdClient,
+    LanguageServerClient,
     LSPError,
     get_default_client,
     path_to_uri,
@@ -19,6 +21,15 @@ from agent.lsp.client import (
     uri_to_path,
 )
 from agent.lsp.framing import LSPProtocolError, read_message, write_message
+from agent.lsp.registry import (
+    LanguageServerClientManager,
+    ServerSpec,
+    WorkspaceContext,
+    detect_workspace_context,
+    get_client_manager,
+    get_server_spec_for_path,
+    reset_client_manager,
+)
 from agent.lsp.types import (
     CallHierarchyIncomingCall,
     CallHierarchyItem,
@@ -48,6 +59,7 @@ __all__ = [
     "CallHierarchyItem",
     "CallHierarchyOutgoingCall",
     "ClangdClient",
+    "LanguageServerClient",
     "CompletionItem",
     "CompletionList",
     "Diagnostic",
@@ -55,10 +67,12 @@ __all__ = [
     "InitializeResult",
     "LSPError",
     "LSPProtocolError",
+    "LanguageServerClientManager",
     "Location",
     "Position",
     "Range",
     "ServerCapabilities",
+    "ServerSpec",
     "TextDocumentContentChangeEvent",
     "TextDocumentIdentifier",
     "TextDocumentItem",
@@ -67,10 +81,15 @@ __all__ = [
     "TypeHierarchyItem",
     "VersionedTextDocumentIdentifier",
     "WorkspaceEdit",
+    "WorkspaceContext",
     "WorkspaceSymbol",
+    "detect_workspace_context",
+    "get_client_manager",
+    "get_server_spec_for_path",
     "get_default_client",
     "path_to_uri",
     "read_message",
+    "reset_client_manager",
     "reset_default_client",
     "uri_to_path",
     "write_message",

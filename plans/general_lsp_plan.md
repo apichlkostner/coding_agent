@@ -258,6 +258,13 @@ Enable the same generic tools for Python through `pyright-langserver` with proje
 ### Verification
 
 - Real pyright integration tests should cover:
+
+## Implementation Notes
+
+- Completed all five slices.
+- `workspace.py` was folded into `src/agent/lsp/registry.py` to keep backend resolution, workspace detection, and pooled lifecycle in one internal module.
+- The public tool surface now exposes only `lsp_definition`, `lsp_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_rename`, and `lsp_diagnostics`.
+- Added real integration coverage for both clangd and pyright. Pyright rename may return `documentChanges` rather than `changes`, and the tests accept that raw `WorkspaceEdit` shape.
   - `lsp_definition`
   - `lsp_references`
   - `lsp_document_symbols`

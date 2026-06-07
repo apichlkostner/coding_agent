@@ -1,15 +1,4 @@
-"""Tests for the :mod:`agent.tools.tools_clangd` tool wrappers.
-
-Two test classes are provided:
-
-- ``TestClangdToolsMocked`` — exercises each tool against an in-process
-  mock LSP server (no ``clangd`` binary required).  Confirms that the
-  tool layer sends the right LSP request, applies the path-safety
-  policy, and surfaces ``"Error: ..."`` strings on failure.
-- ``TestClangdToolsIntegration`` — gated on the presence of ``clangd``
-  on ``$PATH``.  Runs end-to-end against the small fixture project at
-  ``tests/fixtures/lsp_cpp/``.
-"""
+"""Tests for the generic LSP tool wrappers."""
 
 from __future__ import annotations
 
@@ -17,25 +6,22 @@ import asyncio
 import json
 import os
 import shutil
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent.lsp import ClangdClient
+from agent.lsp import LanguageServerClient, ServerSpec, WorkspaceContext
 from agent.tools import get_tools
-from agent.tools.tools_clangd import (
-    clangd_call_hierarchy,
-    clangd_completion,
-    clangd_definition,
-    clangd_document_symbols,
-    clangd_references,
-    clangd_rename,
-    clangd_type_hierarchy,
-    clangd_workspace_symbols,
+from agent.tools.tools_lsp import (
+    lsp_definition,
+    lsp_diagnostics,
+    lsp_document_symbols,
+    lsp_references,
+    lsp_rename,
+    lsp_workspace_symbols,
 )
-
-# Re-use the mock server + wiring from the client tests.
 from tests.test_lsp_client import (  # noqa: PLC0415
     MockLspServer,
     _BidiClientPipe,
@@ -43,36 +29,65 @@ from tests.test_lsp_client import (  # noqa: PLC0415
     _wire_client_with_mock,
 )
 
-# ---------------------------------------------------------------------------
-# Helpers + fixtures
-# ---------------------------------------------------------------------------
+
+def _cpp_spec() -> ServerSpec:
+    return ServerSpec(
+        server_id="clangd",
+        language_id="cpp",
+        file_extensions=frozenset({".cpp", ".h"}),
+        root_markers=(".clangd", ".git"),
+    )
 
 
-async def _async_return(value: Any) -> Any:
-    return value
+def _cpp_context(path: Path, workspace_root: Path) -> WorkspaceContext:
+    return WorkspaceContext(path=path, language="cpp", workspace_root=workspace_root)
+
+
+class _DummyClient:
+    def __getattr__(self, name: str) -> Any:  # pragma: no cover - defensive
+        raise AssertionError(
+            f"_DummyClient.{name} was called but the request should have been rejected first"
+        )
+
+
+class _UnsupportedClient:
+    def server_capabilities(self) -> dict[str, Any]:
+        return {}
+
+    def __getattr__(self, name: str) -> Any:  # pragma: no cover - defensive
+        raise AssertionError(
+            f"_UnsupportedClient.{name} was called despite missing capability"
+        )
 
 
 @pytest.fixture
 async def wired_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[ClangdClient, MockLspServer, _BidiClientPipe, Path]:
-    """Yield a started ``ClangdClient`` wired to a ``MockLspServer``.
-
-    Also patches ``agent.tools.tools_clangd.get_default_client`` so the
-    tools route through the wired client.  ``monkeypatch`` undoes the
-    patch automatically when the test ends.
-    """
+) -> AsyncGenerator[
+    tuple[LanguageServerClient, MockLspServer, _BidiClientPipe, Path], None
+]:
     original = os.getcwd()
     os.chdir(tmp_path)
     try:
         client, mock, pipe = _wire_client_with_mock(tmp_path)
-        mock.set_canned("initialize", {"capabilities": {}})
+        mock.set_canned(
+            "initialize",
+            {
+                "capabilities": {
+                    "definitionProvider": True,
+                    "referencesProvider": True,
+                    "documentSymbolProvider": True,
+                    "workspaceSymbolProvider": True,
+                    "renameProvider": True,
+                }
+            },
+        )
         await _start_wired(client, mock, pipe)
 
-        monkeypatch.setattr(
-            "agent.tools.tools_clangd.get_default_client",
-            lambda: _async_return(client),
-        )
+        async def _resolve(path: str, language: str = "") -> Any:
+            return client, _cpp_spec(), _cpp_context(Path(path), tmp_path)
+
+        monkeypatch.setattr("agent.tools.tools_lsp._resolve_client", _resolve)
         yield client, mock, pipe, tmp_path
         await client.stop()
         pipe.close()
@@ -83,26 +98,21 @@ async def wired_client(
 @pytest.fixture
 async def live_client(
     lsp_cpp_project: Path, monkeypatch: pytest.MonkeyPatch
-) -> ClangdClient:
-    """Yield a started ``ClangdClient`` rooted at *lsp_cpp_project*.
-
-    Patches ``agent.tools.tools_clangd.get_default_client`` so the
-    tools route through this client, chdirs into the project root
-    (the path-safety policy anchors at ``os.getcwd()``), and stops
-    the subprocess on teardown.
-    """
+) -> AsyncGenerator[LanguageServerClient, None]:
     original = os.getcwd()
     os.chdir(lsp_cpp_project)
-    client = ClangdClient(
+    client = LanguageServerClient(
         workspace_root=lsp_cpp_project,
         startup_timeout=20.0,
         request_timeout=15.0,
-    )
-    monkeypatch.setattr(
-        "agent.tools.tools_clangd.get_default_client",
-        lambda: _async_return(client),
+        server_name="clangd",
     )
     await client.start()
+
+    async def _resolve(path: str, language: str = "") -> Any:
+        return client, _cpp_spec(), _cpp_context(Path(path), lsp_cpp_project)
+
+    monkeypatch.setattr("agent.tools.tools_lsp._resolve_client", _resolve)
     try:
         yield client
     finally:
@@ -110,48 +120,8 @@ async def live_client(
         os.chdir(original)
 
 
-class _DummyClient:
-    """Stand-in client for policy tests — should never be called."""
-
-    def __getattr__(self, name: str) -> Any:  # pragma: no cover - defensive
-        raise AssertionError(
-            f"_DummyClient.{name} was called but the path policy should "
-            "have rejected the request first."
-        )
-
-
-# ---------------------------------------------------------------------------
-# Per-tool happy path
-# ---------------------------------------------------------------------------
-
-
-class TestClangdToolsMocked:
-    """All tools work end-to-end against the in-process mock server."""
-
-    async def test_clangd_completion(self, wired_client: Any) -> None:
-        _client, mock, _pipe, tmp = wired_client
-        mock.set_canned(
-            "textDocument/completion",
-            {
-                "isIncomplete": False,
-                "items": [{"label": "foo", "kind": 12, "detail": "void foo()"}],
-            },
-        )
-        f = tmp / "a.cpp"
-        f.write_text("int main() {}\n")
-
-        result = await clangd_completion.ainvoke(
-            {"path": str(f), "line": 1, "character": 0}
-        )
-        payload = json.loads(result)
-        assert payload[0]["label"] == "foo"
-        assert payload[0]["kind"] == "function"
-
-        sent = mock.requests_by_method["textDocument/completion"]
-        assert sent[0]["params"]["textDocument"]["uri"].endswith("a.cpp")
-        assert sent[0]["params"]["position"] == {"line": 0, "character": 0}
-
-    async def test_clangd_definition(self, wired_client: Any) -> None:
+class TestLspToolsMocked:
+    async def test_lsp_definition(self, wired_client: Any) -> None:
         _client, mock, _pipe, tmp = wired_client
         mock.set_canned(
             "textDocument/definition",
@@ -168,16 +138,13 @@ class TestClangdToolsMocked:
         f = tmp / "a.cpp"
         f.write_text("//\n")
 
-        result = await clangd_definition.ainvoke(
+        result = await lsp_definition.ainvoke(
             {"path": str(f), "line": 1, "character": 0}
         )
         payload = json.loads(result)
-        assert len(payload) == 1
-        assert payload[0]["line"] == 6  # 0-based 5 → 1-based 6
-        assert payload[0]["character"] == 0
-        assert payload[0]["path"] == "/x.cpp"
+        assert payload == [{"path": "/x.cpp", "line": 6, "character": 0}]
 
-    async def test_clangd_references(self, wired_client: Any) -> None:
+    async def test_lsp_references(self, wired_client: Any) -> None:
         _client, mock, _pipe, tmp = wired_client
         mock.set_canned(
             "textDocument/references",
@@ -185,8 +152,8 @@ class TestClangdToolsMocked:
                 {
                     "uri": "file:///y.cpp",
                     "range": {
-                        "start": {"line": 1, "character": 0},
-                        "end": {"line": 1, "character": 3},
+                        "start": {"line": 1, "character": 2},
+                        "end": {"line": 1, "character": 5},
                     },
                 }
             ],
@@ -194,7 +161,7 @@ class TestClangdToolsMocked:
         f = tmp / "a.cpp"
         f.write_text("//\n")
 
-        result = await clangd_references.ainvoke(
+        result = await lsp_references.ainvoke(
             {"path": str(f), "line": 1, "character": 0, "include_declaration": False}
         )
         payload = json.loads(result)
@@ -202,14 +169,14 @@ class TestClangdToolsMocked:
         sent = mock.requests_by_method["textDocument/references"]
         assert sent[0]["params"]["context"]["includeDeclaration"] is False
 
-    async def test_clangd_document_symbols(self, wired_client: Any) -> None:
+    async def test_lsp_document_symbols(self, wired_client: Any) -> None:
         _client, mock, _pipe, tmp = wired_client
         mock.set_canned(
             "textDocument/documentSymbol",
             [
                 {
                     "name": "Greeter",
-                    "kind": 5,  # class
+                    "kind": 5,
                     "range": {
                         "start": {"line": 0, "character": 0},
                         "end": {"line": 4, "character": 1},
@@ -221,7 +188,7 @@ class TestClangdToolsMocked:
                     "children": [
                         {
                             "name": "greet",
-                            "kind": 6,  # method
+                            "kind": 6,
                             "range": {
                                 "start": {"line": 1, "character": 2},
                                 "end": {"line": 3, "character": 3},
@@ -238,14 +205,16 @@ class TestClangdToolsMocked:
         f = tmp / "hello.h"
         f.write_text("class Greeter { void greet(); };\n")
 
-        result = await clangd_document_symbols.ainvoke({"path": str(f)})
+        result = await lsp_document_symbols.ainvoke({"path": str(f)})
         payload = json.loads(result)
-        names = [(s["name"], s["kind"], s["depth"]) for s in payload]
+        names = {
+            (symbol["name"], symbol["kind"], symbol["depth"]) for symbol in payload
+        }
         assert ("Greeter", "class", 0) in names
         assert ("greet", "method", 1) in names
 
-    async def test_clangd_workspace_symbols(self, wired_client: Any) -> None:
-        _client, mock, _pipe, _tmp = wired_client
+    async def test_lsp_workspace_symbols(self, wired_client: Any) -> None:
+        _client, mock, _pipe, tmp = wired_client
         mock.set_canned(
             "workspace/symbol",
             [
@@ -263,205 +232,108 @@ class TestClangdToolsMocked:
                 }
             ],
         )
+        f = tmp / "main.cpp"
+        f.write_text("int main() { return 0; }\n")
 
-        result = await clangd_workspace_symbols.ainvoke({"query": "main"})
+        result = await lsp_workspace_symbols.ainvoke({"path": str(f), "query": "main"})
         payload = json.loads(result)
         assert payload[0]["name"] == "main"
         assert payload[0]["kind"] == "function"
         assert payload[0]["container_name"] == "global"
-        assert payload[0]["line"] == 1
 
-    async def test_clangd_rename(self, wired_client: Any) -> None:
+    async def test_lsp_workspace_symbols_passes_language_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        original = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            anchor = tmp_path / "anchor.py"
+            anchor.write_text("print('hi')\n")
+            captured: dict[str, str] = {}
+
+            class _Client:
+                def server_capabilities(self) -> dict[str, Any]:
+                    return {"workspaceSymbolProvider": True}
+
+                async def sync_document(self, path: str) -> None:
+                    captured["sync_path"] = path
+
+                async def workspace_symbol(self, query: str) -> list[dict[str, Any]]:
+                    captured["query"] = query
+                    return []
+
+            async def _resolve(path: str, language: str = "") -> Any:
+                captured["path"] = path
+                captured["language"] = language
+                return _Client(), _cpp_spec(), _cpp_context(Path(path), tmp_path)
+
+            monkeypatch.setattr("agent.tools.tools_lsp._resolve_client", _resolve)
+            result = await lsp_workspace_symbols.ainvoke(
+                {"path": str(anchor), "query": "main", "language": "clangd"}
+            )
+        finally:
+            os.chdir(original)
+
+        assert json.loads(result) == []
+        assert captured["path"] == str(anchor)
+        assert captured["language"] == "clangd"
+        assert captured["query"] == "main"
+        assert captured["sync_path"] == str(anchor)
+
+    async def test_lsp_rename(self, wired_client: Any) -> None:
         _client, mock, _pipe, tmp = wired_client
         mock.set_canned(
             "textDocument/rename",
-            {
-                "changes": {
-                    "file:///a.cpp": [
-                        {"range": {}, "newText": "bar"}
-                    ]
-                }
-            },
+            {"changes": {"file:///a.cpp": [{"range": {}, "newText": "bar"}]}},
         )
         f = tmp / "a.cpp"
         f.write_text("int foo;\n")
 
-        result = await clangd_rename.ainvoke(
+        result = await lsp_rename.ainvoke(
             {"path": str(f), "line": 1, "character": 5, "new_name": "bar"}
         )
         payload = json.loads(result)
-        assert "changes" in payload
-        # ``clangd_rename`` returns the raw WorkspaceEdit (URIs intact)
-        # so the LLM can apply the edits verbatim with textDocument
-        # version checks.
         assert "file:///a.cpp" in payload["changes"]
 
-    async def test_clangd_type_hierarchy_subtypes(self, wired_client: Any) -> None:
-        _client, mock, _pipe, tmp = wired_client
-        mock.set_canned(
-            "textDocument/prepareTypeHierarchy",
-            [
-                {
-                    "name": "Base",
-                    "kind": 5,
-                    "uri": "file:///a.h",
-                    "range": {
-                        "start": {"line": 0, "character": 0},
-                        "end": {"line": 0, "character": 11},
-                    },
-                    "selectionRange": {
-                        "start": {"line": 0, "character": 6},
-                        "end": {"line": 0, "character": 10},
-                    },
-                }
-            ],
-        )
-        mock.set_canned(
-            "typeHierarchy/subtypes",
-            [
-                {
-                    "name": "Derived",
-                    "kind": 5,
-                    "uri": "file:///b.h",
-                    "range": {},
-                }
-            ],
-        )
-        mock.set_canned("typeHierarchy/supertypes", [])
-        f = tmp / "a.h"
-        f.write_text("class Base {};\n")
+    async def test_lsp_diagnostics(self, wired_client: Any) -> None:
+        client, mock, _pipe, tmp = wired_client
+        f = tmp / "a.cpp"
+        f.write_text("int x;\n")
 
-        result = await clangd_type_hierarchy.ainvoke(
-            {"path": str(f), "line": 1, "character": 6, "direction": "subtypes"}
+        waiter = asyncio.create_task(lsp_diagnostics.ainvoke({"path": str(f)}))
+        await asyncio.sleep(0)
+        await mock.send_notification(
+            "textDocument/publishDiagnostics",
+            {
+                "uri": f.resolve().as_uri(),
+                "diagnostics": [
+                    {
+                        "range": {"start": {"line": 0, "character": 4}, "end": {}},
+                        "severity": 1,
+                        "code": "E001",
+                        "source": "clangd",
+                        "message": "broken",
+                    }
+                ],
+            },
         )
-        payload = json.loads(result)
-        assert payload["item"]["name"] == "Base"
-        assert payload["subtypes"][0]["name"] == "Derived"
-        assert payload["supertypes"] == []
 
-    async def test_clangd_type_hierarchy_both(self, wired_client: Any) -> None:
-        _client, mock, _pipe, tmp = wired_client
-        mock.set_canned(
-            "textDocument/prepareTypeHierarchy",
-            [
-                {
-                    "name": "Mid",
-                    "kind": 5,
-                    "uri": "file:///m.h",
-                    "range": {"start": {"line": 0, "character": 0}, "end": {}},
-                    "selectionRange": {"start": {"line": 0, "character": 6}, "end": {}},
-                }
-            ],
-        )
-        mock.set_canned(
-            "typeHierarchy/supertypes",
-            [{"name": "Base", "kind": 5, "uri": "file:///a.h", "range": {}}],
-        )
-        mock.set_canned(
-            "typeHierarchy/subtypes",
-            [{"name": "Leaf", "kind": 5, "uri": "file:///l.h", "range": {}}],
-        )
-        f = tmp / "m.h"
-        f.write_text("class Mid : public Base {};\n")
-
-        result = await clangd_type_hierarchy.ainvoke(
-            {"path": str(f), "line": 1, "character": 6, "direction": "both"}
-        )
-        payload = json.loads(result)
-        assert payload["supertypes"][0]["name"] == "Base"
-        assert payload["subtypes"][0]["name"] == "Leaf"
-
-    async def test_clangd_type_hierarchy_invalid_direction(
-        self, wired_client: Any
-    ) -> None:
-        _client, _mock, _pipe, tmp = wired_client
-        f = tmp / "a.h"
-        f.write_text("class Base {};\n")
-        result = await clangd_type_hierarchy.ainvoke(
-            {"path": str(f), "line": 1, "character": 6, "direction": "bogus"}
-        )
-        assert result.startswith("Error:")
-        assert "direction" in result
-
-    async def test_clangd_call_hierarchy_outgoing(self, wired_client: Any) -> None:
-        _client, mock, _pipe, tmp = wired_client
-        mock.set_canned(
-            "textDocument/prepareCallHierarchy",
-            [
-                {
-                    "name": "main",
-                    "kind": 12,
-                    "uri": "file:///main.cpp",
-                    "range": {
-                        "start": {"line": 0, "character": 4},
-                        "end": {"line": 0, "character": 8},
-                    },
-                    "selectionRange": {
-                        "start": {"line": 0, "character": 4},
-                        "end": {"line": 0, "character": 8},
-                    },
-                }
-            ],
-        )
-        mock.set_canned(
-            "callHierarchy/outgoingCalls",
-            [
-                {
-                    "to": {
-                        "name": "helper",
-                        "kind": 12,
-                        "uri": "file:///a.cpp",
-                        "range": {
-                            "start": {"line": 1, "character": 4},
-                            "end": {"line": 1, "character": 10},
-                        },
-                        "selectionRange": {
-                            "start": {"line": 1, "character": 4},
-                            "end": {"line": 1, "character": 10},
-                        },
-                    },
-                    "fromRanges": [
-                        {
-                            "start": {"line": 0, "character": 9},
-                            "end": {"line": 0, "character": 17},
-                        }
-                    ],
-                }
-            ],
-        )
-        mock.set_canned("callHierarchy/incomingCalls", [])
-        f = tmp / "main.cpp"
-        f.write_text("int main(){helper();}\n")
-
-        result = await clangd_call_hierarchy.ainvoke(
-            {"path": str(f), "line": 1, "character": 9, "direction": "outgoing"}
-        )
-        payload = json.loads(result)
-        assert payload["item"]["name"] == "main"
-        assert payload["outgoing"][0]["to"]["name"] == "helper"
-        assert payload["incoming"] == []
-
-    async def test_clangd_call_hierarchy_invalid_direction(
-        self, wired_client: Any
-    ) -> None:
-        _client, _mock, _pipe, tmp = wired_client
-        f = tmp / "main.cpp"
-        f.write_text("int main(){}\n")
-        result = await clangd_call_hierarchy.ainvoke(
-            {"path": str(f), "line": 1, "character": 0, "direction": "wrong"}
-        )
-        assert result.startswith("Error:")
-        assert "direction" in result
-
-
-# ---------------------------------------------------------------------------
-# Policy + registration
-# ---------------------------------------------------------------------------
+        payload = json.loads(await waiter)
+        assert payload == [
+            {
+                "path": str(f.resolve()),
+                "line": 1,
+                "character": 4,
+                "severity": "error",
+                "code": "E001",
+                "source": "clangd",
+                "message": "broken",
+            }
+        ]
+        assert client.get_diagnostics(str(f))
 
 
 class TestToolPolicies:
-    """The path policy and tool registration are enforced at the tool layer."""
-
     async def test_path_outside_project_returns_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -470,127 +342,117 @@ class TestToolPolicies:
         target = outside / "evil.cpp"
         target.write_text("int x;\n")
 
-        # The path policy fires before the client is touched, so the
-        # _DummyClient is unreachable.  Wire it in just in case.
         monkeypatch.setattr(
-            "agent.tools.tools_clangd.get_default_client",
-            lambda: _async_return(_DummyClient()),
+            "agent.tools.tools_lsp._resolve_client",
+            lambda path, language="": asyncio.sleep(
+                0,
+                result=(
+                    _DummyClient(),
+                    _cpp_spec(),
+                    _cpp_context(Path(path), tmp_path),
+                ),
+            ),
         )
-        result = await clangd_document_symbols.ainvoke({"path": str(target)})
+        result = await lsp_document_symbols.ainvoke({"path": str(target)})
         assert result.startswith("Error:")
         assert "not inside the project folder" in result
 
-    async def test_clangd_missing_returns_error(
+    async def test_unsupported_extension_returns_clear_error(
+        self, tmp_path: Path
+    ) -> None:
+        original = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            target = tmp_path / "notes.txt"
+            target.write_text("hello\n")
+            result = await lsp_document_symbols.ainvoke({"path": str(target)})
+        finally:
+            os.chdir(original)
+        assert result.startswith("Error:")
+        assert "unsupported LSP file extension" in result
+
+    async def test_unsupported_capability_returns_clear_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         original = os.getcwd()
         os.chdir(tmp_path)
         try:
-            f = tmp_path / "a.cpp"
-            f.write_text("int x;\n")
+            target = tmp_path / "main.py"
+            target.write_text("print('hi')\n")
 
-            async def _raise() -> None:
-                raise FileNotFoundError(
-                    "clangd not found on PATH (looked for 'clangd')."
+            async def _resolve(path: str, language: str = "") -> Any:
+                return (
+                    _UnsupportedClient(),
+                    ServerSpec(
+                        server_id="pyright",
+                        language_id="python",
+                        file_extensions=frozenset({".py"}),
+                        root_markers=("pyproject.toml", ".git"),
+                    ),
+                    WorkspaceContext(
+                        path=Path(path),
+                        language="python",
+                        workspace_root=tmp_path,
+                    ),
                 )
 
-            monkeypatch.setattr(
-                "agent.tools.tools_clangd.get_default_client", _raise
+            monkeypatch.setattr("agent.tools.tools_lsp._resolve_client", _resolve)
+            result = await lsp_workspace_symbols.ainvoke(
+                {"path": str(target), "query": "demo"}
             )
-            result = await clangd_document_symbols.ainvoke({"path": str(f)})
         finally:
             os.chdir(original)
-        assert result.startswith("Error:")
-        assert "clangd not found" in result
+        assert result == "Error: workspace symbols are not supported by pyright"
 
-    def test_all_clangd_tools_registered_in_get_tools(self) -> None:
-        names = {t.name for t in get_tools()}
+    def test_only_generic_lsp_tools_registered(self) -> None:
+        names = {tool.name for tool in get_tools()}
         expected = {
-            "clangd_completion",
-            "clangd_definition",
-            "clangd_references",
-            "clangd_document_symbols",
-            "clangd_workspace_symbols",
-            "clangd_rename",
-            "clangd_type_hierarchy",
-            "clangd_call_hierarchy",
+            "lsp_definition",
+            "lsp_references",
+            "lsp_document_symbols",
+            "lsp_workspace_symbols",
+            "lsp_rename",
+            "lsp_diagnostics",
         }
-        missing = expected - names
-        assert not missing, f"Missing tool registrations: {missing}"
-
-
-# ---------------------------------------------------------------------------
-# Integration tests — require a real clangd
-# ---------------------------------------------------------------------------
+        assert expected <= names
+        assert not (
+            {"clangd_definition", "clangd_workspace_symbols", "clangd_rename"} & names
+        )
 
 
 CLANGD_AVAILABLE = shutil.which("clangd") is not None
+PYRIGHT_AVAILABLE = shutil.which("pyright-langserver") is not None
 
 
 @pytest.mark.skipif(not CLANGD_AVAILABLE, reason="clangd binary not installed")
 @pytest.mark.integration
-class TestClangdToolsIntegration:
-    """End-to-end tests against the system clangd and a small C++ fixture."""
-
-    @pytest.fixture(autouse=True)
-    async def _reset_singleton(self) -> Any:
-        from agent.lsp import reset_default_client
-
-        await reset_default_client()
-        yield
-        await reset_default_client()
-
+class TestLspToolsIntegration:
     async def test_workspace_symbols_finds_function(
-        self, live_client: ClangdClient, lsp_cpp_project: Path
+        self, live_client: LanguageServerClient, lsp_cpp_project: Path
     ) -> None:
-        # Open the file so clangd indexes it. The tool layer
-        # only triggers did_open for cursor-relative queries;
-        # workspace_symbol relies on the workspace index, but
-        # clangd won't index a file that hasn't been opened.
         main_cpp = lsp_cpp_project / "main.cpp"
-        await live_client.did_open(
-            str(main_cpp), main_cpp.read_text(encoding="utf-8")
-        )
-
         payload: list[dict[str, Any]] = []
         for _ in range(40):
-            result = await clangd_workspace_symbols.ainvoke({"query": "main"})
+            result = await lsp_workspace_symbols.ainvoke(
+                {"path": str(main_cpp), "query": "main"}
+            )
             payload = json.loads(result)
-            if any(s.get("name") == "main" for s in payload):
+            if any(symbol.get("name") == "main" for symbol in payload):
                 break
             await asyncio.sleep(0.5)
         else:
             pytest.fail(f"clangd never indexed 'main': {payload!r}")
 
-        names = {s["name"] for s in payload}
-        assert "main" in names
+        assert "main" in {symbol["name"] for symbol in payload}
 
     async def test_definition_finds_function_definition(
-        self, live_client: ClangdClient, lsp_cpp_project: Path
+        self, live_client: LanguageServerClient, lsp_cpp_project: Path
     ) -> None:
-        # Position the cursor inside `greet` on the call site.
-        # The file is:
-        #   line 1: #include "hello.h"
-        #   line 2: (empty)
-        #   line 3: int main() {
-        #   line 4:     Greeter g("world");
-        #   line 5:     std::string msg = g.greet();
-        #   ...
-        # 1-based line=5, 0-based character inside `greet`
-        # (position 24 of "    std::string msg = g.greet();")
-        # should resolve to Greeter::greet() in hello.cpp.
-        # ``ClangdClient.definition`` calls ``ensure_open`` internally,
-        # so an explicit did_open is unnecessary here (unlike
-        # workspace_symbols, which has no per-file target).
         main_cpp = lsp_cpp_project / "main.cpp"
         payload: list[dict[str, Any]] = []
         for _ in range(40):
-            result = await clangd_definition.ainvoke(
-                {
-                    "path": str(main_cpp),
-                    "line": 5,
-                    "character": 25,
-                }
+            result = await lsp_definition.ainvoke(
+                {"path": str(main_cpp), "line": 5, "character": 25}
             )
             payload = json.loads(result)
             if payload and "hello.cpp" in payload[0].get("path", ""):
@@ -598,4 +460,135 @@ class TestClangdToolsIntegration:
             await asyncio.sleep(0.5)
         else:
             pytest.fail(f"definition never resolved: {payload!r}")
+
         assert payload[0]["line"] >= 1
+
+    async def test_diagnostics_returns_errors(
+        self, live_client: LanguageServerClient, lsp_cpp_project: Path
+    ) -> None:
+        broken_cpp = lsp_cpp_project / "broken.cpp"
+        broken_cpp.write_text("int main( { return 0; }\n")
+
+        payload: list[dict[str, Any]] = []
+        for _ in range(20):
+            result = await lsp_diagnostics.ainvoke({"path": str(broken_cpp)})
+            payload = json.loads(result)
+            if payload:
+                break
+            await asyncio.sleep(0.25)
+        else:
+            pytest.fail("clangd did not publish diagnostics for broken.cpp")
+
+        assert any(item["severity"] == "error" for item in payload)
+
+
+@pytest.mark.skipif(
+    not PYRIGHT_AVAILABLE, reason="pyright-langserver binary not installed"
+)
+@pytest.mark.integration
+class TestLspToolsPyrightIntegration:
+    @pytest.fixture(autouse=True)
+    async def _reset_manager(self) -> AsyncGenerator[None, None]:
+        from agent.lsp import reset_client_manager
+
+        await reset_client_manager()
+        yield
+        await reset_client_manager()
+
+    @pytest.fixture(autouse=True)
+    def _chdir_project(self, lsp_python_project: Path) -> AsyncGenerator[None, None]:
+        original = os.getcwd()
+        os.chdir(lsp_python_project)
+        try:
+            yield
+        finally:
+            os.chdir(original)
+
+    async def test_definition_resolves_python_symbol(
+        self, lsp_python_project: Path
+    ) -> None:
+        app_py = lsp_python_project / "app.py"
+        payload: list[dict[str, Any]] = []
+        for _ in range(20):
+            result = await lsp_definition.ainvoke(
+                {"path": str(app_py), "line": 5, "character": 15}
+            )
+            payload = json.loads(result)
+            if payload and payload[0]["path"].endswith("helpers.py"):
+                break
+            await asyncio.sleep(0.25)
+        else:
+            pytest.fail(f"pyright definition never resolved: {payload!r}")
+
+        assert payload[0]["path"].endswith("helpers.py")
+
+    async def test_references_include_definition_and_usage(
+        self, lsp_python_project: Path
+    ) -> None:
+        app_py = lsp_python_project / "app.py"
+        result = await lsp_references.ainvoke(
+            {"path": str(app_py), "line": 5, "character": 15}
+        )
+        payload = json.loads(result)
+        paths = {Path(item["path"]).name for item in payload}
+        assert {"helpers.py", "app.py"} <= paths
+
+    async def test_document_symbols_return_python_structure(
+        self, lsp_python_project: Path
+    ) -> None:
+        helpers_py = lsp_python_project / "helpers.py"
+        result = await lsp_document_symbols.ainvoke({"path": str(helpers_py)})
+        payload = json.loads(result)
+        names = {item["name"] for item in payload}
+        assert {"Greeter", "__init__", "greet", "build_message"} <= names
+
+    async def test_workspace_symbols_find_python_function(
+        self, lsp_python_project: Path
+    ) -> None:
+        app_py = lsp_python_project / "app.py"
+        payload: list[dict[str, Any]] = []
+        for _ in range(20):
+            result = await lsp_workspace_symbols.ainvoke(
+                {"path": str(app_py), "query": "build_message"}
+            )
+            payload = json.loads(result)
+            if any(item["name"] == "build_message" for item in payload):
+                break
+            await asyncio.sleep(0.25)
+        else:
+            pytest.fail(f"pyright workspace symbols never found target: {payload!r}")
+
+        assert any(item["path"].endswith("helpers.py") for item in payload)
+
+    async def test_rename_returns_workspace_edit(
+        self, lsp_python_project: Path
+    ) -> None:
+        helpers_py = lsp_python_project / "helpers.py"
+        result = await lsp_rename.ainvoke(
+            {
+                "path": str(helpers_py),
+                "line": 9,
+                "character": 5,
+                "new_name": "build_label",
+            }
+        )
+        payload = json.loads(result)
+        edits = payload.get("changes") or payload.get("documentChanges") or []
+        assert edits
+
+    async def test_diagnostics_return_pyright_error(
+        self, lsp_python_project: Path
+    ) -> None:
+        broken_py = lsp_python_project / "broken.py"
+        payload: list[dict[str, Any]] = []
+        for _ in range(20):
+            result = await lsp_diagnostics.ainvoke({"path": str(broken_py)})
+            payload = json.loads(result)
+            if payload:
+                break
+            await asyncio.sleep(0.25)
+        else:
+            pytest.fail("pyright did not publish diagnostics for broken.py")
+
+        assert any(item["severity"] == "error" for item in payload)
+        assert any("pyright" in item["source"].lower() for item in payload)
