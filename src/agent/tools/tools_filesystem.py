@@ -30,6 +30,36 @@ def _entry_type(p: Path) -> str:
     return "other"
 
 
+def _compress_matches(matches: list[tuple[str, int, str]]) -> list[str]:
+    """Collapse repeated matches in the same file into compact summaries."""
+    grouped: dict[str, list[tuple[int, str]]] = {}
+    for filepath, line_num, text in matches:
+        grouped.setdefault(filepath, []).append((line_num, text))
+
+    compressed = []
+    for filepath, items in grouped.items():
+        items.sort(key=lambda item: item[0])
+        line_nums = [line_num for line_num, _ in items]
+        texts = {text for _, text in items}
+
+        if len(items) == 1:
+            line_num, text = items[0]
+            compressed.append(f"{filepath}:{line_num}:{text.rstrip()}")
+            continue
+
+        if len(texts) == 1:
+            line_text = next(iter(texts)).rstrip()
+            compressed.append(
+                f"{filepath}:{line_nums[0]}-{line_nums[-1]}:{line_text}"
+            )
+            continue
+
+        line_list = ", ".join(str(line_num) for line_num in line_nums)
+        compressed.append(f"{filepath}: lines {line_list} ({len(items)} matches)")
+
+    return compressed
+
+
 # ---------------------------------------------------------------------------
 # Filesystem tools
 # ---------------------------------------------------------------------------
@@ -207,22 +237,25 @@ def grep(
                     with open(filepath, encoding="utf-8", errors="ignore") as f:
                         for line_num, line in enumerate(f, 1):
                             if regex.search(line):
-                                matches.append(f"{filepath}:{line_num}:{line.rstrip()}")
+                                matches.append((str(filepath), line_num, line.rstrip()))
                 except Exception as err:
-                    matches.append(f"Error: {err}")
+                    matches.append((str(filepath), 0, f"Error: {err}"))
+
+        raw_match_count = len(matches)
+        compressed_matches = _compress_matches(matches)
 
         max_results = 1000
-        if len(matches) > max_results:
+        if raw_match_count > max_results or len(compressed_matches) > max_results:
             return str(
                 {
                     "truncated": True,
-                    "total_matches": len(matches),
-                    "shown": max_results,
-                    "results": matches[:max_results],
+                    "total_matches": raw_match_count,
+                    "shown": len(compressed_matches[:max_results]),
+                    "results": compressed_matches[:max_results],
                     "hint": "Refine with a more specific pattern or a subdirectory path",
                 }
             )
-        return str(matches)
+        return str(compressed_matches)
 
     except Exception as err:
         return f"Error: {err}"
