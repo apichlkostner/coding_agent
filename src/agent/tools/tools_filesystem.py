@@ -189,29 +189,40 @@ def grep(
     if skip_dirs is None:
         skip_dirs = set()
     try:
-        if _is_subpath(directory, strict=True):
-            directory = Path(directory)
-            flags = 0 if case_sensitive else re.IGNORECASE
-            regex = re.compile(pattern, flags)
-            matches = []
-            for fp in file_pattern:
-                for filepath in Path(directory).rglob(fp):
-                    if not filepath.is_file():
-                        continue
-                    if skip_dirs and any(part in skip_dirs for part in filepath.parts):
-                        continue
+        if not _is_subpath(directory, strict=True):
+            return "Error: Directory is not inside the project folder"
 
-                    try:
-                        with open(filepath, encoding="utf-8", errors="ignore") as f:
-                            for line_num, line in enumerate(f, 1):
-                                if regex.search(line):
-                                    matches.append(
-                                        f"{filepath}:{line_num}:{line.rstrip()}"
-                                    )
-                    except Exception as err:
-                        matches.append(f"Error: {err}")
+        directory = Path(directory)
+        flags = 0 if case_sensitive else re.IGNORECASE
+        regex = re.compile(pattern, flags)
+        matches = []
+        for fp in file_pattern:
+            for filepath in Path(directory).rglob(fp):
+                if not filepath.is_file():
+                    continue
+                if skip_dirs and any(part in skip_dirs for part in filepath.parts):
+                    continue
 
-            return str(matches)
-        return "Error: Directory is not inside the project folder"
+                try:
+                    with open(filepath, encoding="utf-8", errors="ignore") as f:
+                        for line_num, line in enumerate(f, 1):
+                            if regex.search(line):
+                                matches.append(f"{filepath}:{line_num}:{line.rstrip()}")
+                except Exception as err:
+                    matches.append(f"Error: {err}")
+
+        max_results = 1000
+        if len(matches) > max_results:
+            return str(
+                {
+                    "truncated": True,
+                    "total_matches": len(matches),
+                    "shown": max_results,
+                    "results": matches[:max_results],
+                    "hint": "Refine with a more specific pattern or a subdirectory path",
+                }
+            )
+        return str(matches)
+
     except Exception as err:
         return f"Error: {err}"
