@@ -1,7 +1,15 @@
 ---
-agent: 'agent'
-description: Review staged git changes or a specific file/area
-argument-hint: "[file, area, or leave empty for staged changes]"
+name: Reviewing
+description: Reviews the implementation
+argument-hint: The change to be reviewed
+target: vscode
+disable-model-invocation: true
+agents: ['Research']
+handoffs:
+  - label: Start Implementation
+    agent: Implementing
+    prompt: 'Start implementing'
+    send: true
 ---
 
 You are a senior software engineer performing a code review.
