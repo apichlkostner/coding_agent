@@ -15,11 +15,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage
 
-from agent.__main__ import build_router
+from agent.__main__ import build_one_shot_router, build_router, parse_args
 from agent.adapters import (
+    BatchAdapter,
     DiscordAdapter,
     HeartbeatAdapter,
     MatrixAdapter,
+    PromptAdapter,
     TerminalAdapter,
 )
 from agent.config import HeartbeatSettings, MatrixSettings, Settings, get_settings
@@ -108,6 +110,38 @@ class TestEnabledAdaptersConfig:
 # ===========================================================================
 # build_router()
 # ===========================================================================
+
+
+class TestCliArguments:
+    def test_parse_args_accepts_direct_prompt_mode(self) -> None:
+        args = parse_args(["--prompt", "hello there"])
+
+        assert args.prompt == "hello there"
+        assert args.batch_input is None
+        assert args.batch_output is None
+
+    def test_parse_args_rejects_conflicting_modes(self) -> None:
+        with pytest.raises(SystemExit):
+            parse_args(["--prompt", "hello", "--batch-input", "prompts.txt"])
+
+
+class TestOneShotRouter:
+    def test_build_one_shot_router_registers_prompt_adapter(self) -> None:
+        router = build_one_shot_router(_settings(), graph=_mock_graph(), prompt="hi")
+
+        assert "prompt" in router._adapters
+        assert isinstance(router._adapters["prompt"], PromptAdapter)
+
+    def test_build_one_shot_router_registers_batch_adapter(self) -> None:
+        router = build_one_shot_router(
+            _settings(),
+            graph=_mock_graph(),
+            batch_input="prompts.txt",
+            batch_output="out.jsonl",
+        )
+
+        assert "batch" in router._adapters
+        assert isinstance(router._adapters["batch"], BatchAdapter)
 
 
 class TestBuildRouter:

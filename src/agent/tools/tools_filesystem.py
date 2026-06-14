@@ -49,9 +49,7 @@ def _compress_matches(matches: list[tuple[str, int, str]]) -> list[str]:
 
         if len(texts) == 1:
             line_text = next(iter(texts)).rstrip()
-            compressed.append(
-                f"{filepath}:{line_nums[0]}-{line_nums[-1]}:{line_text}"
-            )
+            compressed.append(f"{filepath}:{line_nums[0]}-{line_nums[-1]}:{line_text}")
             continue
 
         line_list = ", ".join(str(line_num) for line_num in line_nums)

@@ -44,6 +44,14 @@ Extend tests around [tests/test_main.py](tests/test_main.py) and [tests/test_ada
 
 # Plan
 
+Status: completed.
+- Step 1: direct prompt CLI mode implemented in [src/agent/__main__.py](src/agent/__main__.py) and covered by tests in [tests/test_main.py](tests/test_main.py).
+- Step 2: batch adapter implemented in [src/agent/adapters/batch_adapter.py](src/agent/adapters/batch_adapter.py) and covered by tests in [tests/test_adapters.py](tests/test_adapters.py).
+- Step 3: batch CLI wiring and usage docs updated in [README.md](README.md).
+
+Verification: `uv run pytest` passed with 262 tests.
+
+
 ## Step 1 — Add Direct Prompt CLI Mode
 
 Introduce explicit CLI parsing and a one-shot `--prompt` execution path that sends a single instruction through the existing router flow, prints streamed output using terminal-style formatting, and exits without starting the long-running adapters.

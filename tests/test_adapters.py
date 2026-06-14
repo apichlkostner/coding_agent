@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import nio
 import pytest
 
+from agent.adapters.batch_adapter import BatchAdapter
 from agent.adapters.discord_adapter import DiscordAdapter, _DiscordClient
 from agent.adapters.heartbeat_adapter import HeartbeatAdapter
 from agent.adapters.terminal_adapter import TerminalAdapter
@@ -284,6 +285,81 @@ class TestTerminalAdapterSend:
         adapter = TerminalAdapter()
         await adapter.send(msg)
         assert "[agent]" in capsys.readouterr().out
+
+
+class TestBatchAdapter:
+    async def test_start_dispatches_non_empty_lines_in_order(
+        self, tmp_path: Path
+    ) -> None:
+        input_file = tmp_path / "prompts.txt"
+        input_file.write_text("alpha\n\n beta \n", encoding="utf-8")
+        output_file = tmp_path / "out.jsonl"
+
+        adapter = BatchAdapter(input_file=str(input_file), output_file=str(output_file))
+        router = MagicMock()
+        dispatched: list[InboundMessage] = []
+
+        async def fake_dispatch(msg: InboundMessage) -> asyncio.Task[None]:
+            dispatched.append(msg)
+
+            async def _done() -> None:
+                await adapter.send(
+                    OutboundMessage(
+                        adapter_id=msg.adapter_id,
+                        reply_channel_id=msg.reply_channel_id,
+                        content=msg.content.upper(),
+                        metadata={
+                            "msg_type": "response",
+                            "node_name": "agent",
+                            "line_number": msg.metadata.get("line_number"),
+                            "thread_id": msg.thread_id,
+                            "prompt": msg.content,
+                        },
+                    )
+                )
+
+            return asyncio.create_task(_done())
+
+        router.dispatch = fake_dispatch
+
+        await adapter.start(router)
+
+        assert [item.content for item in dispatched] == ["alpha", "beta"]
+        assert dispatched[0].thread_id.startswith("batch-")
+        assert output_file.exists()
+
+        lines = output_file.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 2
+        assert '"line_number": 1' in lines[0]
+        assert '"prompt": "alpha"' in lines[0]
+        assert '"line_number": 3' in lines[1]
+
+    async def test_start_records_error_event_for_failed_dispatch(
+        self, tmp_path: Path
+    ) -> None:
+        input_file = tmp_path / "prompts.txt"
+        input_file.write_text("broken\n", encoding="utf-8")
+        output_file = tmp_path / "out.jsonl"
+
+        router = MagicMock()
+
+        async def fake_dispatch(msg: InboundMessage) -> asyncio.Task[None]:
+            async def _done() -> None:
+                raise RuntimeError("boom")
+
+            return asyncio.create_task(_done())
+
+        router.dispatch = fake_dispatch
+
+        adapter = BatchAdapter(input_file=str(input_file), output_file=str(output_file))
+        await adapter.start(router)
+
+        lines = output_file.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
+        record = __import__("json").loads(lines[0])
+        assert record["line_number"] == 1
+        assert record["event_type"] == "error"
+        assert "boom" in record["content"]
 
 
 class TestTerminalAdapterStart:

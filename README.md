@@ -75,6 +75,29 @@ All settings are loaded from environment variables (`.env` is read automatically
 
 ### Start the agent
 
+#### One-shot prompt mode
+
+Run the agent once on a direct instruction without starting the long-running adapters:
+
+```bash
+uv run agent --prompt "Summarize the current git status and mention any TODOs."
+```
+
+#### Batch mode
+
+Process one prompt per non-empty line and write structured JSONL records to disk:
+
+```bash
+cat > prompts.txt <<'EOF'
+List the top-level files.
+Check for TODO markers in the repo.
+EOF
+
+uv run agent --batch-input prompts.txt --batch-output results.jsonl
+```
+
+The batch output is newline-delimited JSON and includes the source line number, prompt text, event type, and content for each streamed event.
+
 #### Example: run with a local Ollama model
 
 ```ini
