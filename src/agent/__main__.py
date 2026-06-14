@@ -17,7 +17,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agent.adapters.batch_adapter import BatchAdapter
@@ -66,6 +68,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for normal and one-shot execution modes."""
     parser = argparse.ArgumentParser(description="Run the coding agent")
     parser.add_argument(
+        "working_dir",
+        nargs="?",
+        help="Working directory to switch into before starting the agent.",
+    )
+    parser.add_argument(
+        "--workdir",
+        dest="workdir",
+        help="Working directory to switch into before starting the agent.",
+    )
+    parser.add_argument(
         "--prompt",
         help="Run the agent once on a direct prompt and exit.",
     )
@@ -79,6 +91,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     args = parser.parse_args(argv)
+
+    if args.working_dir and args.workdir:
+        parser.error("working directory may be provided only once.")
+
+    args.working_dir = args.working_dir or args.workdir
 
     if args.prompt and (args.batch_input or args.batch_output):
         parser.error("--prompt cannot be combined with batch mode flags.")
@@ -191,6 +208,9 @@ async def _run(argv: list[str] | None = None) -> None:
     """Async body of the application."""
     args = parse_args(argv)
     try:
+        if args.working_dir:
+            os.chdir(Path(args.working_dir).expanduser().resolve())
+
         settings = get_settings()
 
         if args.prompt:

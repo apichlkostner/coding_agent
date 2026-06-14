@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage
 
-from agent.__main__ import build_one_shot_router, build_router, parse_args
+from agent.__main__ import _run, build_one_shot_router, build_router, parse_args
 from agent.adapters import (
     BatchAdapter,
     DiscordAdapter,
@@ -120,9 +120,50 @@ class TestCliArguments:
         assert args.batch_input is None
         assert args.batch_output is None
 
+    def test_parse_args_accepts_working_directory_positional(self) -> None:
+        args = parse_args(["./mysubpath"])
+
+        assert args.working_dir == "./mysubpath"
+
+    def test_parse_args_accepts_workdir_option(self) -> None:
+        args = parse_args(["--workdir", "./mysubpath"])
+
+        assert args.working_dir == "./mysubpath"
+
     def test_parse_args_rejects_conflicting_modes(self) -> None:
         with pytest.raises(SystemExit):
             parse_args(["--prompt", "hello", "--batch-input", "prompts.txt"])
+
+
+class TestRunWorkingDirectory:
+    def test_run_changes_into_requested_working_directory(self, tmp_path: Any) -> None:
+        target_dir = tmp_path / "project"
+        target_dir.mkdir()
+
+        class DummyRouter:
+            async def run(self) -> None:
+                return None
+
+        original_cwd = __import__("os").getcwd()
+
+        try:
+            seen_cwd = None
+
+            def fake_build_router(settings: Settings) -> DummyRouter:
+                nonlocal seen_cwd
+                seen_cwd = __import__("os").getcwd()
+                return DummyRouter()
+
+            with patch("agent.__main__.get_settings", return_value=_settings()):
+                with patch(
+                    "agent.__main__.build_router", side_effect=fake_build_router
+                ):
+                    asyncio.run(_run([str(target_dir)]))
+
+            assert seen_cwd == str(target_dir.resolve())
+            assert __import__("pathlib").Path.cwd() == target_dir.resolve()
+        finally:
+            __import__("os").chdir(original_cwd)
 
 
 class TestOneShotRouter:

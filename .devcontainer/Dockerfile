@@ -17,7 +17,8 @@ RUN su vscode -c "source /usr/local/share/nvm/nvm.sh && nvm install ${NODE_VERSI
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # rtk
-ARG RTK_VERSION=0.42.3
+# latest would be https://github.com/rtk-ai/rtk/releases/latest/download/rtk-x86_64-unknown-linux-musl.tar.gz
+ARG RTK_VERSION=0.42.4
 RUN curl -fsSL https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/rtk-x86_64-unknown-linux-musl.tar.gz \
     | tar -xz -C /usr/local/bin rtk \
     && chmod +x /usr/local/bin/rtk
@@ -25,6 +26,10 @@ RUN curl -fsSL https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/r
 # ---------------------------------------------------------------------------
 # additional installs
 # ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y \
+    clangd \
+    firejail \
+
 RUN su vscode -c " \
     source /usr/local/share/nvm/nvm.sh && \
     npm install -g @earendil-works/pi-coding-agent && \
