@@ -370,6 +370,30 @@ class TestGetLlmFactory:
 
 
 class TestGraphStructure:
+    def test_prompt_builder_appends_agents_md(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Prompt builder should append AGENTS.md content after the base system prompt."""
+        from pathlib import Path
+
+        from agent.prompts import PromptBuilder
+
+        tmp_path = Path("/tmp/agent-prompt-builder-test")
+        tmp_path.mkdir(exist_ok=True)
+        (tmp_path / "AGENTS.md").write_text(
+            "Use tests and keep changes small.\n", encoding="utf-8"
+        )
+
+        monkeypatch.chdir(tmp_path)
+
+        with patch("agent.prompts.datetime") as mock_datetime:
+            mock_datetime.now.return_value.strftime.return_value = "2026-06-14"
+            prompt = PromptBuilder().build()
+
+        assert "You are an expert software engineering assistant." in prompt
+        assert "Use tests and keep changes small." in prompt
+        assert "Current date: 2026-06-14" in prompt
+
     def test_graph_compiles(self) -> None:
         """Graph should compile without errors (no API calls made)."""
         from agent.graph import build_graph

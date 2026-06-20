@@ -6,6 +6,7 @@ import logging
 import sys
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import InMemoryHistory
 
 from agent.router.base_adapter import BaseAdapter
@@ -42,6 +43,8 @@ class TerminalAdapter(BaseAdapter):
 
     def __init__(self) -> None:
         self._session: PromptSession[str] | None = None
+        self._hedgehog_pos = 10
+        self._running = False
 
     def _interactive_stdio_available(self) -> bool:
         return sys.stdin.isatty() and sys.stdout.isatty()
@@ -50,6 +53,16 @@ class TerminalAdapter(BaseAdapter):
         if self._session is None:
             self._session = PromptSession(history=InMemoryHistory())
         return self._session
+
+    def _get_toolbar(self) -> HTML:
+        if self._hedgehog_pos > 0:
+            if self._running:
+                self._hedgehog_pos -= 1
+        else:
+            self._hedgehog_pos = 10
+        hog = self._hedgehog_pos * " " + "🦔"
+        return HTML(f"{hog}"
+    )
 
     async def start(self, router: MessageRouter) -> None:
         """Run the REPL until the user quits or EOF is reached."""
@@ -64,7 +77,10 @@ class TerminalAdapter(BaseAdapter):
 
         while True:
             try:
-                user_input = (await session.prompt_async("You: ")).strip()
+                user_input = (await session.
+                              prompt_async("You: ",
+                                            bottom_toolbar = self._get_toolbar,
+                                            refresh_interval = 0.3,)).strip()
             except EOFError:
                 print("\nGoodbye.")
                 return
@@ -86,8 +102,10 @@ class TerminalAdapter(BaseAdapter):
                 user_id=None,
             )
             # Await the task so the full response is printed before the next prompt.
+            self._running = True
             task = await router.dispatch(inbound)
             await task
+            self._running = False
 
     async def send(self, message: OutboundMessage) -> None:
         """Print *message* to stdout with formatting appropriate to its type."""

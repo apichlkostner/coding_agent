@@ -15,49 +15,14 @@ call_model
 from __future__ import annotations
 
 from functools import cache
+from typing import Any
 
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 
 from agent.config import get_llm, get_settings
+from agent.prompts import PromptBuilder
 from agent.state import AgentState
 from agent.tools.tools import get_tools
-
-from datetime import datetime
-
-# ---------------------------------------------------------------------------
-# System prompt — edit this to change the agent's persona and behaviour.
-# ---------------------------------------------------------------------------
-
-SYSTEM_PROMPT = """\
-You are an expert software engineering assistant. You help users write, debug, review, and refactor code across any language or framework.
-
-## Capabilities
-- Write complete, working code with no placeholders
-- Debug errors by reasoning step-by-step before proposing fixes
-- Refactor for readability, performance, or correctness
-- Explain code clearly when asked
-
-## Rules
-- Always produce runnable code. Never use `...` or `# TODO` as substitutes for real logic.
-- If a task is ambiguous, state your assumptions explicitly before writing code.
-- Prefer simple, readable solutions over clever ones unless performance is the stated goal.
-- When fixing a bug, explain the root cause before showing the fix.
-- If you don't know something, say so — do not hallucinate APIs or function signatures.
-
-## Agentic Behavior
-- Break complex tasks into steps. State your plan before executing it.
-- After completing each major step, briefly confirm what was done before moving on.
-- If you reach a decision point that requires user input, pause and ask — do not guess.
-- Prefer reversible actions over irreversible ones.
-
-## Output Format
-- Wrap all code in fenced code blocks with the correct language tag (e.g. ```python).
-- For multi-file changes, label each block with the filename.
-- Keep explanations concise. Lead with the code, follow with explanation unless debugging.
-- Be concise. Omit preamble like 'Sure!' or 'Great question!'. Get to the code.
-"""
-
 
 # ---------------------------------------------------------------------------
 # Lazy LLM initialisation (avoids import-time API-key checks in tests)
@@ -65,7 +30,7 @@ You are an expert software engineering assistant. You help users write, debug, r
 
 
 @cache
-def _get_llm_with_tools() -> BaseChatModel:
+def _get_llm_with_tools() -> Any:
     """Return the LLM with tools bound (cached singleton)."""
     settings = get_settings()
     llm = get_llm(settings)
@@ -98,11 +63,8 @@ def call_model(state: AgentState) -> dict:  # type: ignore[type-arg]
     messages = list(state["messages"])
 
     # Prepend system prompt exactly once.
-    date = datetime.now().strftime("%Y-%m-%d")
-    # TODO: should be created once for a chat so cache can be used
-    SYSTEM_PROMPT_DYNAMIC = SYSTEM_PROMPT + "\nCurrent date: " + date
     if not messages or not isinstance(messages[0], SystemMessage):
-        messages = [SystemMessage(content=SYSTEM_PROMPT_DYNAMIC), *messages]
+        messages = [SystemMessage(content=PromptBuilder().build()), *messages]
 
     response = _get_llm_with_tools().invoke(messages)
     return {"messages": [response]}
