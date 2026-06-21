@@ -362,18 +362,15 @@ class TestBatchAdapter:
         assert "boom" in record["content"]
 
 
-class TestTerminalAdapterStart:
-    async def test_start_dispatches_message(self) -> None:
-        adapter = TerminalAdapter()
-        adapter._session = MagicMock()
-        router, captured = _mock_router_with_dispatch()
+class TestTerminalAdapterProcessInput:
+    """Tests for _process_input — the core dispatch + status logic."""
 
-        with patch.object(
-            adapter._session,
-            "prompt_async",
-            new=AsyncMock(side_effect=["hello world", EOFError()]),
-        ):
-            await adapter.start(router)
+    async def test_dispatches_message(self) -> None:
+        adapter = TerminalAdapter()
+        router, captured = _mock_router_with_dispatch()
+        adapter._router = router
+
+        await adapter._process_input("hello world")
 
         assert len(captured) == 1
         assert captured[0].content == "hello world"
@@ -382,67 +379,77 @@ class TestTerminalAdapterStart:
         assert captured[0].reply_channel_id == "stdout"
         assert captured[0].user_id is None
 
-    async def test_start_skips_empty_input(self) -> None:
+    async def test_skips_empty_input(self) -> None:
         adapter = TerminalAdapter()
-        adapter._session = MagicMock()
         router, captured = _mock_router_with_dispatch()
+        adapter._router = router
 
-        with patch.object(
-            adapter._session,
-            "prompt_async",
-            new=AsyncMock(side_effect=["", "  ", "hi", EOFError()]),
-        ):
-            await adapter.start(router)
+        await adapter._process_input("")
+        await adapter._process_input("   ")
 
-        assert len(captured) == 1
-        assert captured[0].content == "hi"
+        assert len(captured) == 0
 
-    async def test_start_returns_on_quit_command(self) -> None:
+    async def test_ignores_quit_commands(self) -> None:
         adapter = TerminalAdapter()
-        adapter._session = MagicMock()
         router, captured = _mock_router_with_dispatch()
+        adapter._router = router
 
         for cmd in ("quit", "Quit", "QUIT", "exit", "q"):
             captured.clear()
-            with patch.object(
-                adapter._session,
-                "prompt_async",
-                new=AsyncMock(side_effect=[cmd]),
-            ):
-                await adapter.start(router)
+            await adapter._process_input(cmd)
             assert len(captured) == 0, f"'{cmd}' should not dispatch"
 
-    async def test_start_returns_on_eof(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    async def test_sets_working_status_during_processing(self) -> None:
         adapter = TerminalAdapter()
-        adapter._session = MagicMock()
+        statuses: list[str] = []
+
+        async def capture_status_dispatch(msg: InboundMessage) -> asyncio.Task[None]:
+            statuses.append(adapter._status)
+
+            async def noop() -> None:
+                pass
+
+            return asyncio.create_task(noop())
+
+        router = MagicMock()
+        router.dispatch = capture_status_dispatch
+        adapter._router = router
+
+        await adapter._process_input("hello")
+
+        assert statuses == ["Working..."]
+
+    async def test_resets_status_after_completion(self) -> None:
+        adapter = TerminalAdapter()
         router, _ = _mock_router_with_dispatch()
+        adapter._router = router
 
-        with patch.object(
-            adapter._session, "prompt_async", new=AsyncMock(side_effect=EOFError())
-        ):
-            await adapter.start(router)  # must return, not raise
+        await adapter._process_input("hello")
 
-        assert "Goodbye" in capsys.readouterr().out
+        assert adapter._status == "Idle"
+        assert adapter._processing is False
 
-    async def test_start_reraises_keyboard_interrupt(self) -> None:
+    async def test_resets_status_on_error(self) -> None:
         adapter = TerminalAdapter()
-        adapter._session = MagicMock()
-        router, _ = _mock_router_with_dispatch()
 
-        with patch.object(
-            adapter._session,
-            "prompt_async",
-            new=AsyncMock(side_effect=KeyboardInterrupt()),
-        ):
-            with pytest.raises(KeyboardInterrupt):
-                await adapter.start(router)
+        async def failing_dispatch(msg: InboundMessage) -> asyncio.Task[None]:
+            async def fail() -> None:
+                raise RuntimeError("boom")
 
-    async def test_start_awaits_task_before_next_prompt(self) -> None:
-        """The task must be awaited so the response is printed before the next prompt."""
+            return asyncio.create_task(fail())
+
+        router = MagicMock()
+        router.dispatch = failing_dispatch
+        adapter._router = router
+
+        await adapter._process_input("hello")  # must not raise
+
+        assert adapter._status == "Idle"
+        assert adapter._processing is False
+
+    async def test_awaits_dispatch_task(self) -> None:
+        """The task must be fully awaited before _process_input returns."""
         adapter = TerminalAdapter()
-        adapter._session = MagicMock()
         order: list[str] = []
 
         async def slow_dispatch(msg: InboundMessage) -> asyncio.Task[None]:
@@ -455,24 +462,99 @@ class TestTerminalAdapterStart:
 
         router = MagicMock()
         router.dispatch = slow_dispatch
+        adapter._router = router
 
-        prompt_calls = 0
+        await adapter._process_input("first")
 
-        async def mock_prompt(_: str) -> str:
-            nonlocal prompt_calls
-            prompt_calls += 1
-            if prompt_calls == 1:
-                order.append("prompt_1")
-                return "first"
-            order.append("prompt_2")
-            raise EOFError()
+        assert order == ["task_start", "task_end"]
+        assert adapter._processing is False
 
-        with patch.object(adapter._session, "prompt_async", new=mock_prompt):
-            await adapter.start(router)
+    async def test_ignores_input_while_processing(self) -> None:
+        adapter = TerminalAdapter()
+        router, captured = _mock_router_with_dispatch()
+        adapter._router = router
+        adapter._processing = True
 
-        # prompt_1 → task_start → task_end → prompt_2
-        assert order == ["prompt_1", "task_start", "task_end", "prompt_2"]
+        await adapter._process_input("ignored")
 
+        assert len(captured) == 0
+
+
+class TestTerminalAdapterAcceptHandler:
+    """Tests for the Buffer accept handler (fires on Enter)."""
+
+    @staticmethod
+    def _make_adapter_with_mock_app() -> TerminalAdapter:
+        adapter = TerminalAdapter()
+        adapter._app = MagicMock()
+        return adapter
+
+    async def test_quit_exits_app(self) -> None:
+        adapter = self._make_adapter_with_mock_app()
+        buff = MagicMock()
+        buff.text = "quit"
+
+        handler = adapter._make_accept_handler()
+        handler(buff)
+
+        adapter._app.exit.assert_called_once()
+        buff.reset.assert_called_once()
+
+    async def test_quit_variants_exit_app(self) -> None:
+        for cmd in ("quit", "Quit", "QUIT", "exit", "q"):
+            adapter = self._make_adapter_with_mock_app()
+            buff = MagicMock()
+            buff.text = cmd
+
+            handler = adapter._make_accept_handler()
+            handler(buff)
+
+            adapter._app.exit.assert_called_once()
+
+    async def test_empty_input_does_not_exit_or_dispatch(self) -> None:
+        adapter = self._make_adapter_with_mock_app()
+        buff = MagicMock()
+        buff.text = "   "
+
+        handler = adapter._make_accept_handler()
+        handler(buff)
+
+        adapter._app.exit.assert_not_called()
+        adapter._app.create_background_task.assert_not_called()
+        buff.reset.assert_called_once()
+
+    async def test_input_while_processing_ignored(self) -> None:
+        adapter = self._make_adapter_with_mock_app()
+        adapter._processing = True
+        buff = MagicMock()
+        buff.text = "hello"
+
+        handler = adapter._make_accept_handler()
+        handler(buff)
+
+        adapter._app.create_background_task.assert_not_called()
+        buff.reset.assert_called_once()
+
+    async def test_valid_input_creates_background_task(self) -> None:
+        adapter = self._make_adapter_with_mock_app()
+        created: list[Any] = []
+
+        def fake_create_task(coro: Any) -> None:
+            created.append(coro)
+            coro.close()
+
+        adapter._app.create_background_task = fake_create_task
+        buff = MagicMock()
+        buff.text = "hello world"
+
+        handler = adapter._make_accept_handler()
+        handler(buff)
+
+        assert len(created) == 1
+        buff.reset.assert_called_once()
+
+
+class TestTerminalAdapterStart:
     async def test_start_skips_non_interactive_stdio(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
