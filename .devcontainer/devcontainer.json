@@ -24,6 +24,7 @@
     }
   ],
   "runArgs": [
+        "--network=dev",
         "--add-host=host.docker.internal:host-gateway"
   ],
 
@@ -33,7 +34,8 @@
   "postCreateCommand": "uv sync --all-groups && rtk init --copilot",
 
   "remoteEnv": {
-    "OLLAMA_BASE_URL": "http://host.docker.internal:11434"
+    "OLLAMA_BASE_URL": "http://host.docker.internal:11434",
+    "LITELLM_BASE_URL": "http://litellm:4000/v1"
   },
 
   // ---------------------------------------------------------------------------
