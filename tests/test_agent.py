@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from pydantic import SecretStr
 
 from agent.config import Settings, get_llm, get_settings
 from agent.tools import *
@@ -270,7 +271,7 @@ class TestSettings:
         monkeypatch.setenv("MODEL_NAME", "")
         s = get_settings()
         assert s.llm_provider == "openai"
-        assert s.resolved_model == "gpt-5.4-nano"
+        assert s.resolved_model == "gpt-5.6-luna"
 
     def test_anthropic_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_PROVIDER", "anthropic")
@@ -292,6 +293,21 @@ class TestSettings:
         s = get_settings()
         assert s.ollama_base_url == "http://localhost:11434"
 
+    def test_litellm_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "litellm")
+        monkeypatch.setenv("MODEL_NAME", "")
+        monkeypatch.delenv("LITELLM_BASE_URL", raising=False)
+        s = get_settings()
+        assert s.llm_provider == "litellm"
+        assert s.resolved_model == "gpt-5.6-luna"
+        assert s.litellm_base_url == "http://litellm:4000/v1"
+
+    def test_litellm_base_url_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER", "litellm")
+        monkeypatch.setenv("LITELLM_BASE_URL", "http://127.0.0.1:4000/v1")
+        s = get_settings()
+        assert s.litellm_base_url == "http://127.0.0.1:4000/v1"
+
     def test_explicit_model_name_overrides_default(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -304,7 +320,7 @@ class TestSettings:
         monkeypatch.setenv("LLM_PROVIDER", "cohere")
         with pytest.raises(
             ValueError,
-            match="Choose 'openai', 'anthropic', or 'ollama'",
+            match="Choose 'openai', 'anthropic', 'ollama', or 'litellm'",
         ):
             get_settings()
 
@@ -361,6 +377,27 @@ class TestGetLlmFactory:
             model="qwen2.5-coder:14b",
             temperature=0.2,
             base_url="http://127.0.0.1:11434",
+        )
+
+    def test_litellm_provider_branch(self) -> None:
+        mock_chat_openai = MagicMock(name="ChatOpenAI")
+        fake_module = types.SimpleNamespace(ChatOpenAI=mock_chat_openai)
+
+        with patch.dict("sys.modules", {"langchain_openai": fake_module}):
+            settings = Settings(
+                llm_provider="litellm",
+                model_name="gpt-5.6-luna",
+                temperature=0.1,
+                litellm_base_url="http://litellm:4000/v1",
+                litellm_api_key="",
+            )
+            get_llm(settings)
+
+        mock_chat_openai.assert_called_once_with(
+            model="gpt-5.6-luna",
+            temperature=0.1,
+            base_url="http://litellm:4000/v1",
+            api_key=SecretStr("sk-dummy"),
         )
 
 

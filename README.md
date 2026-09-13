@@ -39,6 +39,7 @@ Edit `.env` and configure your provider:
 - OpenAI: set `OPENAI_API_KEY`
 - Anthropic: set `ANTHROPIC_API_KEY`
 - Ollama: set `LLM_PROVIDER=ollama` and ensure Ollama is running (default `OLLAMA_BASE_URL=http://localhost:11434`)
+- LiteLLM: set `LLM_PROVIDER=litellm` to route through a LiteLLM proxy (default `LITELLM_BASE_URL=http://litellm:4000/v1`)
 
 ## Configuration
 
@@ -46,10 +47,12 @@ All settings are loaded from environment variables (`.env` is read automatically
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_PROVIDER` | `openai` | `"openai"`, `"anthropic"`, or `"ollama"` |
+| `LLM_PROVIDER` | `openai` | `"openai"`, `"anthropic"`, `"ollama"`, or `"litellm"` |
 | `OPENAI_API_KEY` | — | Required for OpenAI |
 | `ANTHROPIC_API_KEY` | — | Required for Anthropic |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for Ollama server (used when `LLM_PROVIDER=ollama`) |
+| `LITELLM_BASE_URL` | `http://litellm:4000/v1` | Base URL for LiteLLM proxy (used when `LLM_PROVIDER=litellm`) |
+| `LITELLM_API_KEY` | — | Optional API key for LiteLLM proxy |
 | `MODEL_NAME` | _(provider default)_ | Override model (e.g. `gpt-5.4-mini` or `qwen2.5-coder:14b`) |
 | `TEMPERATURE` | `0` | LLM sampling temperature |
 | `ENABLED_ADAPTERS` | `terminal,discord,heartbeat` | Comma-separated adapters to start; unset = all three built-in; `""` = none. Add `matrix` to enable the Matrix adapter. |

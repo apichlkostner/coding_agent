@@ -6,6 +6,7 @@ Provider switching is done via the ``LLM_PROVIDER`` env var:
     LLM_PROVIDER=openai      # uses ChatOpenAI  (default)
     LLM_PROVIDER=anthropic   # uses ChatAnthropic
     LLM_PROVIDER=ollama      # uses ChatOllama (local/hosted)
+    LLM_PROVIDER=litellm     # uses ChatOpenAI against a LiteLLM proxy (OpenAI-compatible)
 """
 
 from __future__ import annotations
@@ -20,13 +21,14 @@ from langchain_core.language_models import BaseChatModel
 # Load .env at import time so settings are always populated.
 load_dotenv()
 
-Provider = Literal["openai", "anthropic", "ollama"]
+Provider = Literal["openai", "anthropic", "ollama", "litellm"]
 
 # Default models per provider — override with MODEL_NAME env var.
 _DEFAULT_MODELS: dict[Provider, str] = {
-    "openai": "gpt-5.4-nano",
+    "openai": "gpt-5.6-luna",
     "anthropic": "claude-haiku-4-5-20251001",
     "ollama": "qwen2.5-coder:14b",
+    "litellm": "gpt-5.6-luna",
 }
 
 
@@ -84,6 +86,8 @@ class Settings:
     temperature: float = field(default=0.0)
     discord_token: str = field(default="")
     ollama_base_url: str = field(default="http://localhost:11434")
+    litellm_base_url: str = field(default="http://litellm:4000/v1")
+    litellm_api_key: str = field(default="")
     heartbeat: HeartbeatSettings = field(default_factory=HeartbeatSettings)
     matrix: MatrixSettings = field(default_factory=MatrixSettings)
     enabled_adapters: frozenset[str] = field(
@@ -102,10 +106,10 @@ class Settings:
 def get_settings() -> Settings:
     """Build a ``Settings`` instance from environment variables."""
     raw_provider = os.getenv("LLM_PROVIDER", "openai").lower()
-    if raw_provider not in ("openai", "anthropic", "ollama"):
+    if raw_provider not in ("openai", "anthropic", "ollama", "litellm"):
         raise ValueError(
             f"Unsupported LLM_PROVIDER '{raw_provider}'. "
-            "Choose 'openai', 'anthropic', or 'ollama'."
+            "Choose 'openai', 'anthropic', 'ollama', or 'litellm'."
         )
     discord_token = os.getenv("DISCORD_BOT_TOKEN", "")
     heartbeat = HeartbeatSettings(
@@ -137,6 +141,8 @@ def get_settings() -> Settings:
         temperature=float(os.getenv("TEMPERATURE", "0")),
         discord_token=discord_token,
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        litellm_base_url=os.getenv("LITELLM_BASE_URL", "http://litellm:4000/v1"),
+        litellm_api_key=os.getenv("LITELLM_API_KEY", ""),
         heartbeat=heartbeat,
         matrix=matrix,
         enabled_adapters=enabled_adapters,
@@ -179,7 +185,18 @@ def get_llm(settings: Settings | None = None) -> BaseChatModel:
             base_url=cfg.ollama_base_url,
         )
 
+    if cfg.llm_provider == "litellm":
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415
+        from pydantic import SecretStr  # noqa: PLC0415
+
+        return ChatOpenAI(
+            model=cfg.resolved_model,
+            temperature=cfg.temperature,
+            base_url=cfg.litellm_base_url,
+            api_key=SecretStr(cfg.litellm_api_key or "sk-dummy"),
+        )
+
     raise ValueError(
         f"Unsupported LLM provider: {cfg.llm_provider}. "
-        "Expected one of: openai, anthropic, ollama."
+        "Expected one of: openai, anthropic, ollama, litellm."
     )
