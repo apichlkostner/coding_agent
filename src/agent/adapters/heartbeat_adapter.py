@@ -6,7 +6,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from agent.config import HeartbeatSettings
+from agent.config import Heartbeat
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
@@ -24,8 +24,8 @@ class HeartbeatAdapter(BaseAdapter):
 
     The agent controls *outbound forwarding* explicitly by calling the
     :func:`~agent.tools.tools_notifications.send_notification` tool — when it does,
-    the message is forwarded to ``settings.output_adapter_id`` /
-    ``settings.output_channel_id``.  Normal response text is logged only;
+    the message is forwarded to ``config.output_adapter`` /
+    ``config.output_channel``.  Normal response text is logged only;
     nothing is forwarded unless the agent asks for it.
 
     This is the canonical example of an *agent-initiated* message flow: no
@@ -39,7 +39,7 @@ class HeartbeatAdapter(BaseAdapter):
 
     Parameters
     ----------
-    settings:
+    config:
         :class:`~agent.config.HeartbeatSettings` instance.  Defaults to
         ``HeartbeatSettings()`` (600 s interval, ``HEARTBEAT.md`` file,
         no forwarding).
@@ -47,8 +47,8 @@ class HeartbeatAdapter(BaseAdapter):
 
     adapter_id = "heartbeat"
 
-    def __init__(self, settings: HeartbeatSettings | None = None) -> None:
-        self._settings = settings or HeartbeatSettings()
+    def __init__(self, config: Heartbeat | None = None) -> None:
+        self._config = config or Heartbeat()
         self._router: MessageRouter | None = None
 
     async def start(self, router: MessageRouter) -> None:
@@ -56,20 +56,20 @@ class HeartbeatAdapter(BaseAdapter):
         self._router = router
 
         try:
-            prompt = Path(self._settings.prompt_file).read_text(encoding="utf-8")
+            prompt = Path(self._config.prompt_file).read_text(encoding="utf-8")
         except FileNotFoundError:
             logger.error(
                 "HeartbeatAdapter: '%s' not found — heartbeat disabled.",
-                self._settings.prompt_file,
+                self._config.prompt_file,
             )
             return
 
-        fwd = self._settings.output_adapter_id and self._settings.output_channel_id
+        fwd = self._config.output_adapter and self._config.output_channel
         logger.info(
             "HeartbeatAdapter started (interval=%ss, file='%s', forward=%s).",
-            self._settings.interval_seconds,
-            self._settings.prompt_file,
-            f"{self._settings.output_adapter_id}:{self._settings.output_channel_id}"
+            self._config.interval,
+            self._config.prompt_file,
+            f"{self._config.output_adapter}:{self._config.output_channel}"
             if fwd
             else "log-only",
         )
@@ -86,7 +86,7 @@ class HeartbeatAdapter(BaseAdapter):
             await task  # wait for agent to finish before sleeping
 
             await self._maybe_forward_notifications()
-            await asyncio.sleep(self._settings.interval_seconds)
+            await asyncio.sleep(self._config.interval)
 
     async def _maybe_forward_notifications(self) -> bool:
         """Forward any notifications the agent queued during this run.
@@ -94,8 +94,8 @@ class HeartbeatAdapter(BaseAdapter):
         Returns ``True`` if at least one notification was forwarded.
         """
         if (
-            not self._settings.output_adapter_id
-            or not self._settings.output_channel_id
+            not self._config.output_adapter
+            or not self._config.output_channel
             or self._router is None
         ):
             consume_notifications()  # drain buffer even when forwarding disabled
@@ -105,8 +105,8 @@ class HeartbeatAdapter(BaseAdapter):
         for notification in consume_notifications():
             await self._router.send_to(
                 OutboundMessage(
-                    adapter_id=self._settings.output_adapter_id,
-                    reply_channel_id=self._settings.output_channel_id,
+                    adapter_id=self._config.output_adapter,
+                    reply_channel_id=self._config.output_channel,
                     content=notification,
                     metadata={"msg_type": "response"},
                 )

@@ -23,12 +23,14 @@ class _DiscordClient(discord.Client):
     avoids the ``start(token)`` vs ``BaseAdapter.start(router)`` signature clash.
     """
 
-    def __init__(self, adapter: "DiscordAdapter", **kwargs: object) -> None:
+    def __init__(self, adapter: DiscordAdapter, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._adapter = adapter
 
     async def on_ready(self) -> None:
-        logger.info("Discord ready: %s (ID: %s)", self.user, self.user.id if self.user else "?")
+        logger.info(
+            "Discord ready: %s (ID: %s)", self.user, self.user.id if self.user else "?"
+        )
 
     async def on_message(self, message: discord.Message) -> None:
         logger.info("%s: %s", message.author, message.content)

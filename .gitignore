@@ -55,3 +55,5 @@ docs/opencode
 docs/langgraph
 nio_store
 .test_project
+agent.log
+element-keys.txt

@@ -1,4 +1,4 @@
-"""Tests for Phase 3 — __main__.build_router(), Settings.enabled_adapters,
+"""Tests for Phase 3 — __main__.build_router(), config-driven adapters,
 and a full end-to-end integration test.
 
 All tests run without a real LLM or Discord token.
@@ -24,7 +24,7 @@ from agent.adapters import (
     PromptAdapter,
     TerminalAdapter,
 )
-from agent.config import HeartbeatSettings, MatrixSettings, Settings, get_settings
+from agent.config import Config
 from agent.router import AgentService, InboundMessage, MessageRouter
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import OutboundMessage
@@ -49,62 +49,65 @@ def _mock_graph(*responses: str) -> MagicMock:
     return g
 
 
-def _settings(**kwargs: Any) -> Settings:
-    """Build a Settings object with sane test defaults."""
+def _config(**kwargs: Any) -> Config:
+    """Build a Config object with sane test defaults."""
     defaults: dict[str, Any] = {
-        "enabled_adapters": frozenset(),
-        "discord_token": "",
-        "heartbeat": HeartbeatSettings(),
-        "matrix": MatrixSettings(),
+        "model_provider": {
+            "name": "litellm",
+            "api": "openai_compatible",
+            "api_key": "sk-test",
+            "endpoint": "https://api.example.com",
+        },
+        "model": {"name": "gpt-5.6-luna", "effort": "high"},
+        "discord_adapter": {"bot_token": ""},
+        "heartbeat": {
+            "interval": 600,
+            "prompt_file": "HEARTBEAT.md",
+            "output_adapter": "",
+            "output_channel": "",
+        },
+        "matrix_adapter": {
+            "homeserver_url": "",
+            "access_token": "",
+            "user_id": "",
+        },
     }
     defaults.update(kwargs)
-    return Settings(**defaults)
+    return Config(**defaults)
 
 
 # ===========================================================================
-# Settings.enabled_adapters
+# Config — enabled adapters
 # ===========================================================================
 
 
 class TestEnabledAdaptersConfig:
-    def test_default_includes_all_three(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.delenv("ENABLED_ADAPTERS", raising=False)
-        s = get_settings()
-        assert s.enabled_adapters == frozenset({"terminal", "discord", "heartbeat"})
+    """The enabled-adapter set is currently hardcoded in ``build_router``.
 
-    def test_reads_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("ENABLED_ADAPTERS", "terminal,heartbeat")
-        s = get_settings()
-        assert "terminal" in s.enabled_adapters
-        assert "heartbeat" in s.enabled_adapters
-        assert "discord" not in s.enabled_adapters
+    These tests pin the current behaviour so the TODO in ``__main__.py``
+    (drive the set from config) can be implemented without silent drift.
+    """
 
-    def test_empty_env_means_no_adapters(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("ENABLED_ADAPTERS", "")
-        s = get_settings()
-        assert len(s.enabled_adapters) == 0
+    def test_config_has_no_enabled_adapters_field(self) -> None:
+        config = _config()
+        assert not hasattr(config, "enabled_adapters")
 
-    def test_whitespace_trimmed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("ENABLED_ADAPTERS", " terminal , discord ")
-        s = get_settings()
-        assert "terminal" in s.enabled_adapters
-        assert "discord" in s.enabled_adapters
-
-    def test_single_adapter(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("ENABLED_ADAPTERS", "discord")
-        s = get_settings()
-        assert s.enabled_adapters == frozenset({"discord"})
-
-    def test_is_frozenset(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.delenv("ENABLED_ADAPTERS", raising=False)
-        s = get_settings()
-        assert isinstance(s.enabled_adapters, frozenset)
+    def test_build_router_registers_all_known_adapters(self) -> None:
+        config = _config(
+            discord_adapter={"bot_token": "tok"},
+            matrix_adapter={
+                "homeserver_url": "https://matrix.example.com",
+                "access_token": "syt_token",
+                "user_id": "@bot:matrix.example.com",
+            },
+        )
+        router = build_router(config, graph=_mock_graph())
+        assert set(router._adapters) == {
+            "terminal",
+            "discord",
+            "heartbeat",
+            "matrix",
+        }
 
 
 # ===========================================================================
@@ -149,12 +152,12 @@ class TestRunWorkingDirectory:
         try:
             seen_cwd = None
 
-            def fake_build_router(settings: Settings) -> DummyRouter:
+            def fake_build_router(config: Config) -> DummyRouter:
                 nonlocal seen_cwd
                 seen_cwd = __import__("os").getcwd()
                 return DummyRouter()
 
-            with patch("agent.__main__.get_settings", return_value=_settings()):
+            with patch("agent.__main__.load_config", return_value=_config()):
                 with patch(
                     "agent.__main__.build_router", side_effect=fake_build_router
                 ):
@@ -168,14 +171,13 @@ class TestRunWorkingDirectory:
 
 class TestOneShotRouter:
     def test_build_one_shot_router_registers_prompt_adapter(self) -> None:
-        router = build_one_shot_router(_settings(), graph=_mock_graph(), prompt="hi")
+        router = build_one_shot_router(graph=_mock_graph(), prompt="hi")
 
         assert "prompt" in router._adapters
         assert isinstance(router._adapters["prompt"], PromptAdapter)
 
     def test_build_one_shot_router_registers_batch_adapter(self) -> None:
         router = build_one_shot_router(
-            _settings(),
             graph=_mock_graph(),
             batch_input="prompts.txt",
             batch_output="out.jsonl",
@@ -186,86 +188,70 @@ class TestOneShotRouter:
 
 
 class TestBuildRouter:
-    def test_registers_terminal_when_enabled(self) -> None:
-        settings = _settings(enabled_adapters=frozenset({"terminal"}))
-        router = build_router(settings, graph=_mock_graph())
+    def test_registers_terminal(self) -> None:
+        router = build_router(_config(), graph=_mock_graph())
         assert "terminal" in router._adapters
         assert isinstance(router._adapters["terminal"], TerminalAdapter)
 
     def test_registers_discord_with_valid_token(self) -> None:
-        settings = _settings(
-            enabled_adapters=frozenset({"discord"}), discord_token="tok-abc"
-        )
-        router = build_router(settings, graph=_mock_graph())
+        config = _config(discord_adapter={"bot_token": "tok-abc"})
+        router = build_router(config, graph=_mock_graph())
         assert "discord" in router._adapters
         assert isinstance(router._adapters["discord"], DiscordAdapter)
 
-    def test_skips_discord_without_token(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        settings = _settings(enabled_adapters=frozenset({"discord"}), discord_token="")
-        with caplog.at_level(logging.WARNING, logger="agent.__main__"):
-            router = build_router(settings, graph=_mock_graph())
+    def test_skips_discord_without_token(self) -> None:
+        config = _config(discord_adapter={"bot_token": ""})
+        router = build_router(config, graph=_mock_graph())
         assert "discord" not in router._adapters
-        assert any("DISCORD_BOT_TOKEN" in r.message for r in caplog.records)
 
-    def test_registers_heartbeat_when_enabled(self) -> None:
-        settings = _settings(enabled_adapters=frozenset({"heartbeat"}))
-        router = build_router(settings, graph=_mock_graph())
+    def test_registers_heartbeat(self) -> None:
+        router = build_router(_config(), graph=_mock_graph())
         assert "heartbeat" in router._adapters
         assert isinstance(router._adapters["heartbeat"], HeartbeatAdapter)
 
-    def test_heartbeat_uses_configured_settings(self) -> None:
-        hb = HeartbeatSettings(interval_seconds=30, prompt_file="custom.md")
-        settings = _settings(enabled_adapters=frozenset({"heartbeat"}), heartbeat=hb)
-        router = build_router(settings, graph=_mock_graph())
+    def test_heartbeat_uses_configured_values(self) -> None:
+        hb = {
+            "interval": 30,
+            "prompt_file": "custom.md",
+            "output_adapter": "",
+            "output_channel": "",
+        }
+        config = _config(heartbeat=hb)
+        router = build_router(config, graph=_mock_graph())
         adapter = router._adapters["heartbeat"]
         assert isinstance(adapter, HeartbeatAdapter)
-        assert adapter._settings.interval_seconds == 30
-        assert adapter._settings.prompt_file == "custom.md"
+        assert adapter._config.interval == 30
+        assert adapter._config.prompt_file == "custom.md"
 
-    def test_registers_all_three_adapters(self) -> None:
-        settings = _settings(
-            enabled_adapters=frozenset({"terminal", "discord", "heartbeat"}),
-            discord_token="tok",
+    def test_registers_all_adapters(self) -> None:
+        config = _config(
+            discord_adapter={"bot_token": "tok"},
+            matrix_adapter={
+                "homeserver_url": "https://matrix.example.com",
+                "access_token": "syt_token",
+                "user_id": "@bot:matrix.example.com",
+            },
         )
-        router = build_router(settings, graph=_mock_graph())
+        router = build_router(config, graph=_mock_graph())
         assert "terminal" in router._adapters
         assert "discord" in router._adapters
         assert "heartbeat" in router._adapters
-
-    def test_no_adapters_when_enabled_set_empty(self) -> None:
-        settings = _settings(enabled_adapters=frozenset())
-        router = build_router(settings, graph=_mock_graph())
-        assert len(router._adapters) == 0
-
-    def test_unknown_adapter_id_in_enabled_set_is_ignored(self) -> None:
-        settings = _settings(
-            enabled_adapters=frozenset({"terminal", "some_future_adapter"})
-        )
-        router = build_router(settings, graph=_mock_graph())
-        # "some_future_adapter" is not a known key → not registered, no crash
-        assert "terminal" in router._adapters
-        assert "some_future_adapter" not in router._adapters
+        assert "matrix" in router._adapters
 
     def test_returns_message_router_instance(self) -> None:
-        settings = _settings()
-        router = build_router(settings, graph=_mock_graph())
+        router = build_router(_config(), graph=_mock_graph())
         assert isinstance(router, MessageRouter)
 
     def test_uses_default_graph_when_none_given(self) -> None:
         """build_router without an explicit graph must not raise at construction time."""
-        settings = _settings(enabled_adapters=frozenset({"terminal"}))
         # No graph passed → lazy-imports agent.graph.graph (safe, no API call).
-        router = build_router(settings)
+        router = build_router(_config())
         assert "terminal" in router._adapters
 
     def test_each_call_produces_independent_router(self) -> None:
-        settings = _settings(
-            enabled_adapters=frozenset({"terminal"}), discord_token="tok"
-        )
-        r1 = build_router(settings, graph=_mock_graph())
-        r2 = build_router(settings, graph=_mock_graph())
+        config = _config(discord_adapter={"bot_token": "tok"})
+        r1 = build_router(config, graph=_mock_graph())
+        r2 = build_router(config, graph=_mock_graph())
         assert r1 is not r2
         assert r1._adapters["terminal"] is not r2._adapters["terminal"]
 
@@ -431,8 +417,6 @@ class TestIntegration:
 
     async def test_build_router_integration_with_mock_graph(self) -> None:
         """build_router() wired end-to-end: dispatch → stub adapter receives response."""
-        settings = _settings(enabled_adapters=frozenset({"collector"}))
-
         # Patch build_router's adapter list to include our stub.
         graph = _mock_graph("Router integration answer.")
         service = AgentService(graph)
@@ -460,104 +444,40 @@ class TestIntegration:
 
 
 class TestBuildRouterMatrix:
-    def _matrix_settings(self, **kwargs: Any) -> Settings:
-        matrix = MatrixSettings(
-            homeserver_url="https://matrix.example.com",
-            access_token="syt_fake",
-            user_id="@bot:example.com",
-        )
-        return _settings(
-            enabled_adapters=frozenset({"matrix"}),
-            matrix=matrix,
-            **kwargs,
-        )
+    def _matrix_config(self, **kwargs: Any) -> Config:
+        matrix = {
+            "homeserver_url": "https://matrix.example.com",
+            "access_token": "syt_fake",
+            "user_id": "@bot:example.com",
+        }
+        matrix.update(kwargs)
+        return _config(matrix_adapter=matrix)
 
     def test_registers_matrix_with_full_credentials(self) -> None:
-        settings = self._matrix_settings()
-        router = build_router(settings, graph=_mock_graph())
+        config = self._matrix_config()
+        router = build_router(config, graph=_mock_graph())
         assert "matrix" in router._adapters
         assert isinstance(router._adapters["matrix"], MatrixAdapter)
 
-    def test_matrix_adapter_has_correct_settings(self) -> None:
-        settings = self._matrix_settings()
-        router = build_router(settings, graph=_mock_graph())
+    def test_matrix_adapter_has_correct_config(self) -> None:
+        config = self._matrix_config()
+        router = build_router(config, graph=_mock_graph())
         adapter = router._adapters["matrix"]
         assert isinstance(adapter, MatrixAdapter)
-        assert adapter._settings.homeserver_url == "https://matrix.example.com"
-        assert adapter._settings.user_id == "@bot:example.com"
+        assert adapter._config.homeserver_url == "https://matrix.example.com"
+        assert adapter._config.user_id == "@bot:example.com"
 
-    def test_skips_matrix_when_homeserver_url_missing(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        settings = _settings(
-            enabled_adapters=frozenset({"matrix"}),
-            matrix=MatrixSettings(
-                homeserver_url="", access_token="tok", user_id="@bot:x.org"
-            ),
-        )
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="agent.__main__"):
-            router = build_router(settings, graph=_mock_graph())
-        assert "matrix" not in router._adapters
-        assert any("MATRIX_HOMESERVER_URL" in r.message for r in caplog.records)
-
-    def test_skips_matrix_when_access_token_missing(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        settings = _settings(
-            enabled_adapters=frozenset({"matrix"}),
-            matrix=MatrixSettings(
-                homeserver_url="https://x.org", access_token="", user_id="@bot:x.org"
-            ),
-        )
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="agent.__main__"):
-            router = build_router(settings, graph=_mock_graph())
+    def test_skips_matrix_when_homeserver_url_missing(self) -> None:
+        config = self._matrix_config(homeserver_url="")
+        router = build_router(config, graph=_mock_graph())
         assert "matrix" not in router._adapters
 
-    def test_skips_matrix_when_user_id_missing(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        settings = _settings(
-            enabled_adapters=frozenset({"matrix"}),
-            matrix=MatrixSettings(
-                homeserver_url="https://x.org", access_token="tok", user_id=""
-            ),
-        )
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="agent.__main__"):
-            router = build_router(settings, graph=_mock_graph())
+    def test_skips_matrix_when_access_token_missing(self) -> None:
+        config = self._matrix_config(access_token="")
+        router = build_router(config, graph=_mock_graph())
         assert "matrix" not in router._adapters
 
-    def test_matrix_not_registered_when_not_in_enabled(self) -> None:
-        settings = _settings(
-            enabled_adapters=frozenset({"terminal"}),
-            matrix=MatrixSettings(
-                homeserver_url="https://x.org", access_token="tok", user_id="@bot:x.org"
-            ),
-        )
-        router = build_router(settings, graph=_mock_graph())
+    def test_skips_matrix_when_user_id_missing(self) -> None:
+        config = self._matrix_config(user_id="")
+        router = build_router(config, graph=_mock_graph())
         assert "matrix" not in router._adapters
-
-    def test_warns_when_matrix_credentials_exist_but_adapter_not_enabled(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        settings = _settings(
-            enabled_adapters=frozenset({"terminal"}),
-            matrix=MatrixSettings(
-                homeserver_url="https://x.org",
-                access_token="tok",
-                user_id="@bot:x.org",
-            ),
-        )
-
-        with caplog.at_level(logging.WARNING, logger="agent.__main__"):
-            router = build_router(settings, graph=_mock_graph())
-
-        assert "matrix" not in router._adapters
-        assert any(
-            "adapter is not enabled" in record.message for record in caplog.records
-        )

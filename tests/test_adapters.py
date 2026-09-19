@@ -17,7 +17,8 @@ from agent.adapters.batch_adapter import BatchAdapter
 from agent.adapters.discord_adapter import DiscordAdapter, _DiscordClient
 from agent.adapters.heartbeat_adapter import HeartbeatAdapter
 from agent.adapters.terminal_adapter import TerminalAdapter
-from agent.config import HeartbeatSettings, MatrixSettings, get_settings
+from agent.config import Heartbeat
+from agent.config import MatrixAdapter as MatrixConfig
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
 
@@ -70,58 +71,71 @@ def _mock_router_with_dispatch() -> tuple[MagicMock, list[InboundMessage]]:
 
 
 # ===========================================================================
-# Config — HeartbeatSettings
+# Config — Heartbeat
 # ===========================================================================
 
 
-class TestHeartbeatSettings:
-    def test_defaults(self) -> None:
-        s = HeartbeatSettings()
-        assert s.interval_seconds == 600
-        assert s.prompt_file == "HEARTBEAT.md"
+class TestHeartbeatConfig:
+    def test_required_fields(self) -> None:
+        hb = Heartbeat(
+            interval=600,
+            prompt_file="HEARTBEAT.md",
+            output_adapter="",
+            output_channel="",
+        )
+        assert hb.interval == 600
+        assert hb.prompt_file == "HEARTBEAT.md"
+        assert hb.output_adapter == ""
+        assert hb.output_channel == ""
 
     def test_custom_values(self) -> None:
-        s = HeartbeatSettings(interval_seconds=60, prompt_file="custom.md")
-        assert s.interval_seconds == 60
-        assert s.prompt_file == "custom.md"
+        hb = Heartbeat(
+            interval=60,
+            prompt_file="custom.md",
+            output_adapter="discord",
+            output_channel="12345",
+        )
+        assert hb.interval == 60
+        assert hb.prompt_file == "custom.md"
+        assert hb.output_adapter == "discord"
+        assert hb.output_channel == "12345"
 
-    def test_settings_includes_heartbeat(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        s = get_settings()
-        assert isinstance(s.heartbeat, HeartbeatSettings)
-
-    def test_heartbeat_interval_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("HEARTBEAT_INTERVAL_SECONDS", "120")
-        s = get_settings()
-        assert s.heartbeat.interval_seconds == 120
-
-    def test_heartbeat_prompt_file_from_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("HEARTBEAT_PROMPT_FILE", "MY_BEAT.md")
-        s = get_settings()
-        assert s.heartbeat.prompt_file == "MY_BEAT.md"
-
-
-# ===========================================================================
-# MatrixSettings
-# ===========================================================================
-
-
-class TestMatrixSettings:
     def test_defaults(self) -> None:
-        s = MatrixSettings()
-        assert s.homeserver_url == ""
-        assert s.access_token == ""
-        assert s.user_id == ""
+        hb = Heartbeat()
+        assert hb.interval == 600
+        assert hb.prompt_file == "HEARTBEAT.md"
+        assert hb.output_adapter == ""
+        assert hb.output_channel == ""
+
+
+# ===========================================================================
+# MatrixAdapter config
+# ===========================================================================
+
+
+class TestMatrixConfig:
+    def test_required_fields(self) -> None:
+        s = MatrixConfig(
+            homeserver_url="https://matrix.org",
+            access_token="tok-abc",
+            user_id="@bot:matrix.org",
+        )
+        assert s.homeserver_url == "https://matrix.org"
+        assert s.access_token == "tok-abc"
+        assert s.user_id == "@bot:matrix.org"
+
+    def test_optional_fields_default(self) -> None:
+        s = MatrixConfig(
+            homeserver_url="https://matrix.org",
+            access_token="tok-abc",
+            user_id="@bot:matrix.org",
+        )
         assert s.device_id == ""
         assert s.store_path == ""
         assert s.ignore_unverified_devices is True
 
     def test_custom_values(self) -> None:
-        s = MatrixSettings(
+        s = MatrixConfig(
             homeserver_url="https://matrix.org",
             access_token="tok-abc",
             user_id="@bot:matrix.org",
@@ -136,68 +150,12 @@ class TestMatrixSettings:
         assert s.store_path == "./nio_store"
         assert s.ignore_unverified_devices is False
 
-    def test_settings_includes_matrix(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        s = get_settings()
-        assert isinstance(s.matrix, MatrixSettings)
-
-    def test_matrix_homeserver_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("MATRIX_HOMESERVER_URL", "https://example.com")
-        s = get_settings()
-        assert s.matrix.homeserver_url == "https://example.com"
-
-    def test_matrix_access_token_from_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "syt_abc")
-        s = get_settings()
-        assert s.matrix.access_token == "syt_abc"
-
-    def test_matrix_user_id_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("MATRIX_USER_ID", "@bot:example.com")
-        s = get_settings()
-        assert s.matrix.user_id == "@bot:example.com"
-
-    def test_matrix_device_id_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("MATRIX_DEVICE_ID", "DEV123")
-        s = get_settings()
-        assert s.matrix.device_id == "DEV123"
-
-    def test_matrix_store_path_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("MATRIX_STORE_PATH", "./nio_store")
-        s = get_settings()
-        assert s.matrix.store_path == "./nio_store"
-
-    def test_matrix_ignore_unverified_devices_from_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("MATRIX_IGNORE_UNVERIFIED_DEVICES", "false")
-        s = get_settings()
-        assert s.matrix.ignore_unverified_devices is False
-
-    def test_matrix_defaults_to_empty_when_env_unset(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.delenv("MATRIX_HOMESERVER_URL", raising=False)
-        monkeypatch.delenv("MATRIX_ACCESS_TOKEN", raising=False)
-        monkeypatch.delenv("MATRIX_USER_ID", raising=False)
-        monkeypatch.delenv("MATRIX_DEVICE_ID", raising=False)
-        monkeypatch.delenv("MATRIX_STORE_PATH", raising=False)
-        monkeypatch.delenv("MATRIX_IGNORE_UNVERIFIED_DEVICES", raising=False)
-        s = get_settings()
-        assert s.matrix.homeserver_url == ""
-        assert s.matrix.access_token == ""
-        assert s.matrix.user_id == ""
-        assert s.matrix.device_id == ""
-        assert s.matrix.store_path == ""
-        assert s.matrix.ignore_unverified_devices is True
+    def test_missing_required_field_defaults_to_empty(self) -> None:
+        s = MatrixConfig(
+            homeserver_url="https://matrix.org",
+            access_token="tok-abc",
+        )
+        assert s.user_id == ""
 
 
 # TerminalAdapter
@@ -913,7 +871,12 @@ class TestHeartbeatAdapterStart:
         prompt_file.write_text("Check everything.", encoding="utf-8")
 
         adapter = HeartbeatAdapter(
-            HeartbeatSettings(interval_seconds=1, prompt_file=str(prompt_file))
+            Heartbeat(
+                interval=1,
+                prompt_file=str(prompt_file),
+                output_adapter="",
+                output_channel="",
+            )
         )
         router, captured = _mock_router_with_dispatch()
 
@@ -937,7 +900,12 @@ class TestHeartbeatAdapterStart:
         import logging
 
         adapter = HeartbeatAdapter(
-            HeartbeatSettings(prompt_file="nonexistent_file_xyz.md")
+            Heartbeat(
+                interval=600,
+                prompt_file="nonexistent_file_xyz.md",
+                output_adapter="",
+                output_channel="",
+            )
         )
         router, captured = _mock_router_with_dispatch()
 
@@ -952,7 +920,12 @@ class TestHeartbeatAdapterStart:
         prompt_file.write_text("ping", encoding="utf-8")
 
         adapter = HeartbeatAdapter(
-            HeartbeatSettings(interval_seconds=42, prompt_file=str(prompt_file))
+            Heartbeat(
+                interval=42,
+                prompt_file=str(prompt_file),
+                output_adapter="",
+                output_channel="",
+            )
         )
         router, _ = _mock_router_with_dispatch()
 
@@ -973,7 +946,12 @@ class TestHeartbeatAdapterStart:
         prompt_file.write_text("tick", encoding="utf-8")
 
         adapter = HeartbeatAdapter(
-            HeartbeatSettings(interval_seconds=1, prompt_file=str(prompt_file))
+            Heartbeat(
+                interval=1,
+                prompt_file=str(prompt_file),
+                output_adapter="",
+                output_channel="",
+            )
         )
         router, captured = _mock_router_with_dispatch()
 
@@ -992,18 +970,25 @@ class TestHeartbeatAdapterStart:
         assert len(captured) == 2
         assert all(m.content == "tick" for m in captured)
 
-    async def test_start_uses_default_settings_when_none_given(self) -> None:
-        """Adapter without explicit settings falls back to HeartbeatSettings()."""
+    async def test_start_uses_default_config_when_none_given(self) -> None:
+        """Adapter without explicit config falls back to Heartbeat()."""
         adapter = HeartbeatAdapter()
-        assert adapter._settings.interval_seconds == 600
-        assert adapter._settings.prompt_file == "HEARTBEAT.md"
+        assert adapter._config.interval == 600
+        assert adapter._config.prompt_file == "HEARTBEAT.md"
 
     async def test_start_stores_router_reference(self, tmp_path: Path) -> None:
         """Router passed to start() must be reachable from send() for forwarding."""
         prompt_file = tmp_path / "beat.md"
         prompt_file.write_text("ping", encoding="utf-8")
 
-        adapter = HeartbeatAdapter(HeartbeatSettings(prompt_file=str(prompt_file)))
+        adapter = HeartbeatAdapter(
+            Heartbeat(
+                interval=600,
+                prompt_file=str(prompt_file),
+                output_adapter="",
+                output_channel="",
+            )
+        )
         assert adapter._router is None
 
         router, _ = _mock_router_with_dispatch()
@@ -1054,11 +1039,13 @@ class TestHeartbeatAdapterForwarding:
 
     async def test_send_does_not_forward(self) -> None:
         """send() only logs; forwarding is handled separately."""
-        settings = HeartbeatSettings(
-            output_adapter_id="discord",
-            output_channel_id="99999",
+        config = Heartbeat(
+            interval=600,
+            prompt_file="HEARTBEAT.md",
+            output_adapter="discord",
+            output_channel="99999",
         )
-        adapter = HeartbeatAdapter(settings)
+        adapter = HeartbeatAdapter(config)
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
@@ -1075,13 +1062,13 @@ class TestHeartbeatAdapterForwarding:
 
     async def test_notifications_forwarded_after_run(self) -> None:
         """Notifications queued via send_notification are forwarded post-run."""
-        from agent.tools.tools_notifications import consume_notifications
-
-        settings = HeartbeatSettings(
-            output_adapter_id="discord",
-            output_channel_id="99999",
+        config = Heartbeat(
+            interval=600,
+            prompt_file="HEARTBEAT.md",
+            output_adapter="discord",
+            output_channel="99999",
         )
-        adapter = HeartbeatAdapter(settings)
+        adapter = HeartbeatAdapter(config)
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
@@ -1101,13 +1088,13 @@ class TestHeartbeatAdapterForwarding:
 
     async def test_no_forwarding_when_no_notifications(self) -> None:
         """If no send_notification call, nothing is forwarded."""
-        from agent.tools.tools_notifications import consume_notifications
-
-        settings = HeartbeatSettings(
-            output_adapter_id="discord",
-            output_channel_id="99999",
+        config = Heartbeat(
+            interval=600,
+            prompt_file="HEARTBEAT.md",
+            output_adapter="discord",
+            output_channel="99999",
         )
-        adapter = HeartbeatAdapter(settings)
+        adapter = HeartbeatAdapter(config)
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
@@ -1115,7 +1102,14 @@ class TestHeartbeatAdapterForwarding:
         assert len(forwarded) == 0
 
     async def test_no_forwarding_without_output_adapter(self) -> None:
-        adapter = HeartbeatAdapter(HeartbeatSettings())
+        adapter = HeartbeatAdapter(
+            Heartbeat(
+                interval=600,
+                prompt_file="HEARTBEAT.md",
+                output_adapter="",
+                output_channel="",
+            )
+        )
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
@@ -1126,8 +1120,13 @@ class TestHeartbeatAdapterForwarding:
         assert len(forwarded) == 0
 
     async def test_no_forwarding_when_only_adapter_set(self) -> None:
-        settings = HeartbeatSettings(output_adapter_id="discord", output_channel_id="")
-        adapter = HeartbeatAdapter(settings)
+        config = Heartbeat(
+            interval=600,
+            prompt_file="HEARTBEAT.md",
+            output_adapter="discord",
+            output_channel="",
+        )
+        adapter = HeartbeatAdapter(config)
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
@@ -1138,8 +1137,13 @@ class TestHeartbeatAdapterForwarding:
         assert len(forwarded) == 0
 
     async def test_no_forwarding_when_only_channel_set(self) -> None:
-        settings = HeartbeatSettings(output_adapter_id="", output_channel_id="99999")
-        adapter = HeartbeatAdapter(settings)
+        config = Heartbeat(
+            interval=600,
+            prompt_file="HEARTBEAT.md",
+            output_adapter="",
+            output_channel="99999",
+        )
+        adapter = HeartbeatAdapter(config)
         router, _, forwarded = _mock_router_with_forwarding()
         adapter._router = router  # type: ignore[assignment]
 
@@ -1156,12 +1160,13 @@ class TestHeartbeatAdapterForwarding:
 
         prompt_file = tmp_path / "beat.md"
         prompt_file.write_text("ping", encoding="utf-8")
-        settings = HeartbeatSettings(
+        config = Heartbeat(
+            interval=600,
             prompt_file=str(prompt_file),
-            output_adapter_id="discord",
-            output_channel_id="12345",
+            output_adapter="discord",
+            output_channel="12345",
         )
-        adapter = HeartbeatAdapter(settings)
+        adapter = HeartbeatAdapter(config)
         router, _ = _mock_router_with_dispatch()
 
         with caplog.at_level(logging.INFO, logger="agent.adapters.heartbeat_adapter"):
@@ -1174,21 +1179,26 @@ class TestHeartbeatAdapterForwarding:
         assert any("discord:12345" in r.message for r in caplog.records)
 
 
-class TestHeartbeatSettingsForwarding:
+class TestHeartbeatConfigForwarding:
     def test_defaults_have_no_forwarding(self) -> None:
-        s = HeartbeatSettings()
-        assert s.output_adapter_id == ""
-        assert s.output_channel_id == ""
+        s = Heartbeat(
+            interval=600,
+            prompt_file="HEARTBEAT.md",
+            output_adapter="",
+            output_channel="",
+        )
+        assert s.output_adapter == ""
+        assert s.output_channel == ""
 
-    def test_output_adapter_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("HEARTBEAT_OUTPUT_ADAPTER", "discord")
-        monkeypatch.setenv("HEARTBEAT_OUTPUT_CHANNEL", "123456789")
-        from agent.config import get_settings
-
-        s = get_settings()
-        assert s.heartbeat.output_adapter_id == "discord"
-        assert s.heartbeat.output_channel_id == "123456789"
+    def test_output_adapter_from_config(self) -> None:
+        s = Heartbeat(
+            interval=600,
+            prompt_file="HEARTBEAT.md",
+            output_adapter="discord",
+            output_channel="123456789",
+        )
+        assert s.output_adapter == "discord"
+        assert s.output_channel == "123456789"
 
 
 # ===========================================================================
@@ -1213,11 +1223,10 @@ def _matrix_outbound(
     )
 
 
-def _make_matrix_adapter() -> "MatrixAdapter":
+def _make_matrix_adapter() -> MatrixAdapter:
     from agent.adapters.matrix_adapter import MatrixAdapter
-    from agent.config import MatrixSettings
 
-    settings = MatrixSettings(
+    settings = MatrixConfig(
         homeserver_url="https://matrix.example.com",
         access_token="syt_fake",
         user_id="@bot:example.com",
@@ -1499,7 +1508,6 @@ class TestMatrixAdapterStart:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         from agent.adapters.matrix_adapter import MatrixAdapter
-        from agent.config import MatrixSettings
 
         load_store = MagicMock()
 
@@ -1514,7 +1522,7 @@ class TestMatrixAdapterStart:
             "agent.adapters.matrix_adapter.nio.AsyncClient", DummyClient
         )
 
-        settings = MatrixSettings(
+        settings = MatrixConfig(
             homeserver_url="https://matrix.example.com",
             access_token="syt_fake",
             user_id="@bot:example.com",

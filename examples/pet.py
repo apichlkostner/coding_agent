@@ -5,10 +5,6 @@ import itertools
 import threading
 import time
 
-# ── Cat frames (walking) ──────────────────────────────────────────────────────
-CAT_FRAMES = ["=^.^=", "=^-^=", "=^o^=", "=^-^="]
-cat_cycle = itertools.cycle(CAT_FRAMES)
-
 # ── Hedgehog frames per state ─────────────────────────────────────────────────
 HEDGEHOG_FRAMES = {
     "idle":     ["(` ´ʃƪ)", "(' 'ʃƪ)", "(` ´ʃƪ)", "('-'ʃƪ)"],   # gentle blink
@@ -42,10 +38,8 @@ def set_hog_state(state: str, duration: float = 3.0):
 def get_toolbar():
     with _state_lock:
         label = hog_state.capitalize()
-    cat = next(cat_cycle)
     hog = get_hog_frame()
     return HTML(
-        f"<b>Cat:</b> {cat}   "
         f"<b>Hedgehog:</b> {hog}  <i>({label})</i>"
     )
 
@@ -75,9 +69,8 @@ class StatusBar:
         while not self._stop.is_set():
             with _state_lock:
                 label = hog_state.capitalize()
-            cat = next(cat_cycle)
             hog = get_hog_frame()
-            line = f" Cat: {cat}   Hedgehog: {hog}  ({label}) "
+            line = f"{hog}  ({label}) "
             # Only draw when prompt_toolkit app is NOT running
             if get_app_or_none() is None:
                 print(

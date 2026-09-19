@@ -18,13 +18,16 @@ import ast
 import json
 import os
 import types
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import SecretStr
 
-from agent.config import Settings, get_llm, get_settings
+from agent.config import Config, load_config
+from agent.nodes import get_llm_from_config
 from agent.tools import *
 
 # ---------------------------------------------------------------------------
@@ -265,64 +268,72 @@ class TestGetTools:
 # ---------------------------------------------------------------------------
 
 
-class TestSettings:
-    def test_default_provider_is_openai(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("MODEL_NAME", "")
-        s = get_settings()
-        assert s.llm_provider == "openai"
-        assert s.resolved_model == "gpt-5.6-luna"
+def _config_dict(**overrides: object) -> dict[str, object]:
+    """Baseline YAML config payload; tests override single sections as needed."""
+    data: dict[str, object] = {
+        "model_provider": {
+            "name": "litellm",
+            "api": "openai_compatible",
+            "api_key": "sk-test",
+            "endpoint": "https://api.example.com",
+        },
+        "model": {"name": "gpt-5.6-luna", "effort": "high"},
+        "discord_adapter": {"bot_token": "token"},
+        "heartbeat": {
+            "interval": 30,
+            "prompt_file": "HEARTBEAT.md",
+            "output_adapter": "discord",
+            "output_channel": "12345",
+        },
+        "matrix_adapter": {
+            "homeserver_url": "https://matrix.example.com",
+            "access_token": "syt_token",
+            "user_id": "@bot:matrix.example.com",
+        },
+    }
+    data.update(overrides)
+    return data
 
-    def test_anthropic_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
-        monkeypatch.setenv("MODEL_NAME", "")
-        s = get_settings()
-        assert s.llm_provider == "anthropic"
-        assert "claude" in s.resolved_model
 
-    def test_ollama_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "ollama")
-        monkeypatch.setenv("MODEL_NAME", "")
-        s = get_settings()
-        assert s.llm_provider == "ollama"
-        assert s.resolved_model == "qwen2.5-coder:14b"
+def _write_config(tmp_path: Path, data: object) -> str:
+    """Serialise *data* to ``config.yaml`` under *tmp_path* and return its path."""
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return str(path)
 
-    def test_ollama_base_url_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "ollama")
-        monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
-        s = get_settings()
-        assert s.ollama_base_url == "http://localhost:11434"
 
-    def test_litellm_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "litellm")
-        monkeypatch.setenv("MODEL_NAME", "")
-        monkeypatch.delenv("LITELLM_BASE_URL", raising=False)
-        s = get_settings()
-        assert s.llm_provider == "litellm"
-        assert s.resolved_model == "gpt-5.6-luna"
-        assert s.litellm_base_url == "http://litellm:4000/v1"
+class TestConfigLoading:
+    def test_loads_model_and_provider(self, tmp_path: Path) -> None:
+        config = load_config(_write_config(tmp_path, _config_dict()))
 
-    def test_litellm_base_url_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "litellm")
-        monkeypatch.setenv("LITELLM_BASE_URL", "http://127.0.0.1:4000/v1")
-        s = get_settings()
-        assert s.litellm_base_url == "http://127.0.0.1:4000/v1"
+        assert isinstance(config, Config)
+        assert config.model.name == "gpt-5.6-luna"
+        assert config.model.effort == "high"
+        assert config.model_provider.api == "openai_compatible"
+        assert config.model_provider.endpoint == "https://api.example.com"
 
-    def test_explicit_model_name_overrides_default(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_loads_adapter_sections(self, tmp_path: Path) -> None:
+        config = load_config(_write_config(tmp_path, _config_dict()))
+
+        assert config.discord_adapter.bot_token == "token"
+        assert config.heartbeat.interval == 30
+        assert config.heartbeat.prompt_file == "HEARTBEAT.md"
+        assert config.heartbeat.output_adapter == "discord"
+        assert config.heartbeat.output_channel == "12345"
+        assert config.matrix_adapter.user_id == "@bot:matrix.example.com"
+
+    def test_env_var_expanded_in_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("MODEL_NAME", "gpt-5.4-mini")
-        s = get_settings()
-        assert s.resolved_model == "gpt-5.4-mini"
+        monkeypatch.setenv("TEST_AGENT_API_KEY", "sk-from-env")
+        data = _config_dict()
+        provider = data["model_provider"]
+        assert isinstance(provider, dict)
+        provider["api_key"] = "${TEST_AGENT_API_KEY}"
 
-    def test_invalid_provider_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "cohere")
-        with pytest.raises(
-            ValueError,
-            match="Choose 'openai', 'anthropic', 'ollama', or 'litellm'",
-        ):
-            get_settings()
+        config = load_config(_write_config(tmp_path, data))
+
+        assert config.model_provider.api_key == "sk-from-env"
 
 
 class TestGetLlmFactory:
@@ -330,75 +341,93 @@ class TestGetLlmFactory:
         mock_chat_openai = MagicMock(name="ChatOpenAI")
         fake_module = types.SimpleNamespace(ChatOpenAI=mock_chat_openai)
 
-        with patch.dict("sys.modules", {"langchain_openai": fake_module}):
-            settings = Settings(
-                llm_provider="openai",
-                model_name="gpt-5.4-mini",
-                temperature=0.3,
+        config = Config(
+            **_config_dict(
+                model_provider={
+                    "name": "openai",
+                    "api": "openai",
+                    "api_key": "sk-test",
+                    "endpoint": "https://api.openai.com/v1",
+                },
+                model={"name": "gpt-5.4-mini", "effort": "low"},
             )
-            get_llm(settings)
+        )
+
+        with patch.dict("sys.modules", {"langchain_openai": fake_module}):
+            get_llm_from_config(config)
 
         mock_chat_openai.assert_called_once_with(
             model="gpt-5.4-mini",
-            temperature=0.3,
+            api_key=SecretStr("sk-test"),
+            base_url="https://api.openai.com/v1",
         )
 
     def test_anthropic_provider_branch(self) -> None:
         mock_chat_anthropic = MagicMock(name="ChatAnthropic")
         fake_module = types.SimpleNamespace(ChatAnthropic=mock_chat_anthropic)
 
-        with patch.dict("sys.modules", {"langchain_anthropic": fake_module}):
-            settings = Settings(
-                llm_provider="anthropic",
-                model_name="claude-haiku-4-5-20251001",
-                temperature=0.1,
+        config = Config(
+            **_config_dict(
+                model_provider={
+                    "name": "anthropic",
+                    "api": "anthropic",
+                    "api_key": "sk-ant-test",
+                    "endpoint": "https://api.anthropic.com",
+                },
+                model={"name": "claude-haiku-4-5-20251001", "effort": "low"},
             )
-            get_llm(settings)
+        )
+
+        with patch.dict("sys.modules", {"langchain_anthropic": fake_module}):
+            get_llm_from_config(config)
 
         mock_chat_anthropic.assert_called_once_with(
             model="claude-haiku-4-5-20251001",
-            temperature=0.1,
+            api_key=SecretStr("sk-ant-test"),
+            base_url="https://api.anthropic.com",
         )
 
-    def test_ollama_provider_branch(self) -> None:
-        mock_chat_ollama = MagicMock(name="ChatOllama")
-        fake_module = types.SimpleNamespace(ChatOllama=mock_chat_ollama)
-
-        with patch.dict("sys.modules", {"langchain_ollama": fake_module}):
-            settings = Settings(
-                llm_provider="ollama",
-                model_name="qwen2.5-coder:14b",
-                temperature=0.2,
-                ollama_base_url="http://127.0.0.1:11434",
-            )
-            get_llm(settings)
-
-        mock_chat_ollama.assert_called_once_with(
-            model="qwen2.5-coder:14b",
-            temperature=0.2,
-            base_url="http://127.0.0.1:11434",
-        )
-
-    def test_litellm_provider_branch(self) -> None:
+    def test_openai_compatible_provider_branch(self) -> None:
         mock_chat_openai = MagicMock(name="ChatOpenAI")
         fake_module = types.SimpleNamespace(ChatOpenAI=mock_chat_openai)
 
-        with patch.dict("sys.modules", {"langchain_openai": fake_module}):
-            settings = Settings(
-                llm_provider="litellm",
-                model_name="gpt-5.6-luna",
-                temperature=0.1,
-                litellm_base_url="http://litellm:4000/v1",
-                litellm_api_key="",
+        config = Config(
+            **_config_dict(
+                model_provider={
+                    "name": "litellm",
+                    "api": "openai_compatible",
+                    "api_key": "sk-test",
+                    "endpoint": "http://litellm:4000/v1",
+                },
+                model={"name": "gpt-5.6-luna", "effort": "high"},
             )
-            get_llm(settings)
+        )
+
+        with patch.dict("sys.modules", {"langchain_openai": fake_module}):
+            get_llm_from_config(config)
 
         mock_chat_openai.assert_called_once_with(
             model="gpt-5.6-luna",
-            temperature=0.1,
+            api_key=SecretStr("sk-test"),
             base_url="http://litellm:4000/v1",
-            api_key=SecretStr("sk-dummy"),
         )
+
+    def test_unsupported_api_raises(self) -> None:
+        config = Config(
+            **_config_dict(
+                model_provider={
+                    "name": "vertex",
+                    "api": "openai",
+                    "api_key": "sk-test",
+                    "endpoint": "https://example.com",
+                }
+            )
+        )
+        # Bypass the schema allow-list to exercise the factory's own guard.
+        config.model_provider.api = "vertex"
+
+        with pytest.raises(ValueError, match="Unsupported provider api"):
+            get_llm_from_config(config)
 
 
 # ---------------------------------------------------------------------------

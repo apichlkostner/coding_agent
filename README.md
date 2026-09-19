@@ -31,48 +31,27 @@ pip install uv
 # Create virtual environment and install all dependencies
 uv sync --all-groups
 
-# Copy and fill in your environment variables
+# Copy the environment variable template
 cp .env.example .env
 ```
 
-Edit `.env` and configure your provider:
-- OpenAI: set `OPENAI_API_KEY`
-- Anthropic: set `ANTHROPIC_API_KEY`
-- Ollama: set `LLM_PROVIDER=ollama` and ensure Ollama is running (default `OLLAMA_BASE_URL=http://localhost:11434`)
-- LiteLLM: set `LLM_PROVIDER=litellm` to route through a LiteLLM proxy (default `LITELLM_BASE_URL=http://litellm:4000/v1`)
+Edit `config/config.yaml` to configure the provider, model, and adapters. Copy `.env.example` to `.env` and fill in the credentials referenced by the YAML file, such as `API_KEY_LITELLM`, `DISCORD_BOT_TOKEN`, and the Matrix settings. The loader expands `${VAR}` and `${VAR:-default}` values in YAML from the environment.
 
 ## Configuration
 
-All settings are loaded from environment variables (`.env` is read automatically via `python-dotenv`).
+The application always loads `config/config.yaml` on startup. Its top-level sections are:
 
-| Variable | Default | Description |
-|---|---|---|
-| `LLM_PROVIDER` | `openai` | `"openai"`, `"anthropic"`, `"ollama"`, or `"litellm"` |
-| `OPENAI_API_KEY` | — | Required for OpenAI |
-| `ANTHROPIC_API_KEY` | — | Required for Anthropic |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for Ollama server (used when `LLM_PROVIDER=ollama`) |
-| `LITELLM_BASE_URL` | `http://litellm:4000/v1` | Base URL for LiteLLM proxy (used when `LLM_PROVIDER=litellm`) |
-| `LITELLM_API_KEY` | — | Optional API key for LiteLLM proxy |
-| `MODEL_NAME` | _(provider default)_ | Override model (e.g. `gpt-5.4-mini` or `qwen2.5-coder:14b`) |
-| `TEMPERATURE` | `0` | LLM sampling temperature |
-| `ENABLED_ADAPTERS` | `terminal,discord,heartbeat` | Comma-separated adapters to start; unset = all three built-in; `""` = none. Add `matrix` to enable the Matrix adapter. |
-| `DISCORD_BOT_TOKEN` | — | Discord bot token; adapter skipped if absent |
-| `HEARTBEAT_INTERVAL_SECONDS` | `600` | Seconds between heartbeat runs |
-| `HEARTBEAT_PROMPT_FILE` | `HEARTBEAT.md` | Path to the prompt file sent to the agent each tick |
-| `HEARTBEAT_OUTPUT_ADAPTER` | — | Adapter to forward heartbeat responses to (e.g. `discord`) |
-| `HEARTBEAT_OUTPUT_CHANNEL` | — | Destination within that adapter (e.g. a Discord channel ID) |
-| `MATRIX_HOMESERVER_URL` | — | Matrix homeserver base URL (e.g. `https://matrix.org`) |
-| `MATRIX_ACCESS_TOKEN` | — | Bot access token; adapter skipped if any Matrix var is absent |
-| `MATRIX_USER_ID` | — | Fully-qualified bot user ID (e.g. `@bot:matrix.org`) |
-| `MATRIX_DEVICE_ID` | — | Optional Matrix device ID for persisted encrypted sessions |
-| `MATRIX_STORE_PATH` | — | Optional `matrix-nio` store directory for E2EE state and sync tokens |
-| `MATRIX_IGNORE_UNVERIFIED_DEVICES` | `true` | When sending into encrypted rooms, allow delivery to proceed even if devices are unverified |
-| `TAVILY_API_KEY` | — | Enables live web search tool |
-| `CLANGD_PATH` | `clangd` | Path to the clangd LSP binary used for C/C++ LSP analysis |
-| `PYRIGHT_LANGSERVER_PATH` | `pyright-langserver` | Path to the pyright language server binary used for Python LSP analysis |
-| `LANGCHAIN_TRACING_V2` | `false` | Enable LangSmith tracing |
-| `LANGCHAIN_API_KEY` | — | LangSmith API key |
-| `LANGCHAIN_PROJECT` | `agent-dev` | LangSmith project name |
+| Section | Description |
+|---|---|
+| `model_provider` | Provider name, API protocol, endpoint, and API key |
+| `model` | Model name and reasoning effort |
+| `discord_adapter` | Discord bot token |
+| `heartbeat` | Interval, prompt file, and optional output destination |
+| `matrix_adapter` | Matrix homeserver, credentials, and crypto store settings |
+
+The checked-in [`config/config.yaml`](config/config.yaml) is a complete example. Values can be literal YAML values or environment substitutions. `${VAR}` requires the variable to be set; `${VAR:-default}` supplies a fallback.
+
+Optional integrations still use environment variables: `TAVILY_API_KEY` enables web search, and `LANGCHAIN_TRACING_V2`, `LANGCHAIN_ENDPOINT`, `LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT` configure LangSmith tracing.
 
 ## Usage
 
@@ -104,10 +83,15 @@ The batch output is newline-delimited JSON and includes the source line number, 
 #### Example: run with a local Ollama model
 
 ```ini
-# .env
-LLM_PROVIDER=ollama
-MODEL_NAME=qwen2.5-coder:14b
-OLLAMA_BASE_URL=http://localhost:11434
+# config/config.yaml
+model_provider:
+    name: ollama
+    api: openai_compatible
+    api_key: ollama
+    endpoint: http://localhost:11434/v1
+model:
+    name: qwen2.5-coder:14b
+    effort: low
 ```
 
 > **Note:** Tool-calling reliability varies between local models. Prefer instruction-tuned/chat models with strong tool-use support.
@@ -139,7 +123,7 @@ See [Security](#security) for details.
 ### Discord
 
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) and create a new application.
-2. Under **Bot**, create a bot user and copy the token into `DISCORD_BOT_TOKEN` in `.env`.
+2. Under **Bot**, create a bot user and set `DISCORD_BOT_TOKEN` in `.env`. Reference it from `discord_adapter.bot_token` in `config/config.yaml`.
 3. Under **Bot → Privileged Gateway Intents**, enable **Message Content Intent**.
 4. Under **OAuth2 → URL Generator**, select the `bot` scope and the `Send Messages` + `Read Message History` permissions. Open the generated URL to invite the bot to your server.
 5. Start the agent — the bot will come online and reply to every message in channels it can access.
@@ -156,21 +140,8 @@ Each user × channel combination gets its own persistent conversation thread (th
         -d '{"type":"m.login.password","user":"<username>","password":"<password>"}'
    ```
    Copy the `access_token` from the response.
-3. Set the three env vars in `.env`:
-   ```ini
-   MATRIX_HOMESERVER_URL=https://<homeserver>
-   MATRIX_ACCESS_TOKEN=<token from step 2>
-   MATRIX_USER_ID=@<username>:<homeserver>
-   ```
-    For encrypted rooms, also set a stable device and store path:
-    ```ini
-    MATRIX_DEVICE_ID=<existing or new device id>
-    MATRIX_STORE_PATH=./nio_store
-    ```
-4. Add `matrix` to `ENABLED_ADAPTERS`:
-   ```ini
-   ENABLED_ADAPTERS=terminal,discord,heartbeat,matrix
-   ```
+3. Set `MATRIX_HOMESERVER_URL`, `MATRIX_ACCESS_TOKEN`, and `MATRIX_USER_ID` in `.env`, then reference them from `matrix_adapter` in `config/config.yaml`. For encrypted rooms, also set a stable `MATRIX_DEVICE_ID` and `MATRIX_STORE_PATH`.
+4. The Matrix adapter is registered by the current router; ensure the credentials are present in the YAML configuration.
 5. Add the bot to rooms manually using an admin account or Element. The bot does **not** auto-accept invitations.
 6. Start the agent — the bot will respond to every text message in all joined rooms.
 
@@ -191,13 +162,12 @@ about, call send_notification with the message.
 Then configure the interval and, optionally, where to send the results:
 
 ```ini
-# .env
-HEARTBEAT_INTERVAL_SECONDS=600     # run every 10 minutes
-HEARTBEAT_PROMPT_FILE=HEARTBEAT.md
-
-# Forward the agent's response to a Discord channel:
-HEARTBEAT_OUTPUT_ADAPTER=discord
-HEARTBEAT_OUTPUT_CHANNEL=1234567890123456789  # right-click a channel → Copy Channel ID
+# config/config.yaml
+heartbeat:
+    interval: 600
+    prompt_file: config/HEARTBEAT.md
+    output_adapter: discord
+    output_channel: ${HEARTBEAT_OUTPUT_CHANNEL}
 ```
 
 When `HEARTBEAT_OUTPUT_ADAPTER` and `HEARTBEAT_OUTPUT_CHANNEL` are both set, the agent can forward messages by calling `send_notification`. Normal response text is only logged — nothing reaches the output channel unless the agent explicitly calls the tool. If neither is set, output goes only to `agent.log`.

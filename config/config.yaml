@@ -1,0 +1,28 @@
+# Configuration
+---
+model_provider:
+  name: litellm
+  api: openai
+  api_key: ${API_KEY_LITELLM}
+  endpoint: http://litellm:4000/v1
+
+model:
+    name: gpt-5.6-luna
+    effort: high
+    
+discord_adapter:
+  bot_token: ${DISCORD_BOT_TOKEN:-}
+    
+heartbeat:
+    interval: 30
+    prompt_file: config/HEARTBEAT.md
+    output_adapter: discord
+    output_channel: ${HEARTBEAT_OUTPUT_CHANNEL:-}
+
+matrix_adapter:
+  homeserver_url: ${MATRIX_HOMESERVER_URL:-}
+  access_token: ${MATRIX_ACCESS_TOKEN:-}
+  user_id: ${MATRIX_USER_ID:-}
+  device_id: ${MATRIX_DEVICE_ID:-}
+  store_path: ${MATRIX_STORE_PATH:-}
+  ignore_unverified_devices: true

@@ -17,9 +17,11 @@ from __future__ import annotations
 from functools import cache
 from typing import Any
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
+from pydantic import SecretStr
 
-from agent.config import get_llm, get_settings
+from agent.config import Config, load_config
 from agent.prompts import PromptBuilder
 from agent.state import AgentState
 from agent.tools.tools import get_tools
@@ -29,11 +31,58 @@ from agent.tools.tools import get_tools
 # ---------------------------------------------------------------------------
 
 
+def get_llm_from_config(config: Config) -> BaseChatModel:
+    """Instantiate and return the chat model described by a :class:`Config`.
+
+    Parameters
+    ----------
+    config:
+        Validated configuration loaded via
+        :func:`agent.config.config.load_config`.
+
+    Returns
+    -------
+    BaseChatModel
+        A chat model wired to the provider declared in
+        ``config.model_provider``.
+
+    Raises
+    ------
+    ValueError
+        If ``config.model_provider.api`` is not a supported wire protocol.
+    """
+    provider = config.model_provider
+    model = config.model.name
+
+    if provider.api == "anthropic":
+        from langchain_anthropic import ChatAnthropic  # noqa: PLC0415
+
+        return ChatAnthropic(
+            model=model,
+            api_key=SecretStr(provider.api_key),
+            base_url=provider.endpoint,
+        )
+
+    if provider.api in {"openai", "openai_compatible"}:
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415
+
+        return ChatOpenAI(
+            model=model,
+            api_key=SecretStr(provider.api_key),
+            base_url=provider.endpoint,
+        )
+
+    raise ValueError(
+        f"Unsupported provider api: {provider.api}. "
+        "Expected one of: openai, openai_compatible, anthropic."
+    )
+
+
 @cache
 def _get_llm_with_tools() -> Any:
     """Return the LLM with tools bound (cached singleton)."""
-    settings = get_settings()
-    llm = get_llm(settings)
+    config = load_config("config/config.yaml")
+    llm = get_llm_from_config(config)
     tools = get_tools()
     return llm.bind_tools(tools)
 

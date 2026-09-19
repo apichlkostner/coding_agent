@@ -6,10 +6,10 @@ Public API
     Synchronous entry point registered in ``pyproject.toml`` as the
     ``agent`` console-script.  Calls :func:`asyncio.run` on :func:`_run`.
 
-``build_router(settings, graph)``
+``build_router(config, graph)``
     Pure factory used by :func:`_run` and directly by tests.  Builds a
     :class:`~agent.router.router.MessageRouter` and registers the adapters
-    whose IDs appear in ``settings.enabled_adapters``.
+    whose IDs appear in ``config.enabled_adapters``.
 """
 
 from __future__ import annotations
@@ -22,17 +22,21 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from dotenv import load_dotenv
+
 from agent.adapters.batch_adapter import BatchAdapter
 from agent.adapters.discord_adapter import DiscordAdapter
 from agent.adapters.heartbeat_adapter import HeartbeatAdapter
 from agent.adapters.matrix_adapter import MatrixAdapter
 from agent.adapters.prompt_adapter import PromptAdapter
 from agent.adapters.terminal_adapter import TerminalAdapter
-from agent.config import Settings, get_settings
+from agent.config import Config, load_config
 from agent.router import AgentService, MessageRouter
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
+
+load_dotenv()
 
 GraphType = Any
 
@@ -107,18 +111,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def build_router(
-    settings: Settings,
+    config: Config,
     graph: GraphType | None = None,
 ) -> MessageRouter:
     """Build and return a configured :class:`~agent.router.router.MessageRouter`.
 
-    Adapters are registered according to ``settings.enabled_adapters``.
-    The Discord adapter is silently skipped when its token is absent even
-    if ``"discord"`` is in the enabled set.
+    Adapters are enabled by configuration: terminal is always registered;
+    Discord, heartbeat and Matrix are registered only when their respective
+    configuration is non-empty.
 
     Parameters
     ----------
-    settings:
+    config:
         Runtime configuration (from :func:`~agent.config.get_settings` or
         a hand-crafted instance in tests).
     graph:
@@ -138,47 +142,28 @@ def build_router(
 
     service = AgentService(graph)
     router = MessageRouter(service)
-    enabled = settings.enabled_adapters
 
-    if "terminal" in enabled:
-        router.register(TerminalAdapter())
-        logger.info("Registered TerminalAdapter.")
+    # terminal always enabled
+    router.register(TerminalAdapter())
+    logger.info("Registered TerminalAdapter.")
 
-    if "discord" in enabled:
-        if settings.discord_token:
-            router.register(DiscordAdapter(token=settings.discord_token))
-            logger.info("Registered DiscordAdapter.")
-        else:
-            logger.warning(
-                "Discord adapter is enabled but DISCORD_BOT_TOKEN is not set — skipping."
-            )
+    if config.discord_adapter.bot_token:
+        router.register(DiscordAdapter(token=config.discord_adapter.bot_token))
+        logger.info("Registered DiscordAdapter.")
 
-    if "heartbeat" in enabled:
-        router.register(HeartbeatAdapter(settings.heartbeat))
+    if config.heartbeat.prompt_file:
+        router.register(HeartbeatAdapter(config.heartbeat))
         logger.info("Registered HeartbeatAdapter.")
 
-    ms = settings.matrix
-    if "matrix" in enabled:
-        if ms.homeserver_url and ms.access_token and ms.user_id:
-            router.register(MatrixAdapter(ms))
-            logger.info("Registered MatrixAdapter.")
-        else:
-            logger.warning(
-                "Matrix adapter is enabled but credentials are incomplete "
-                "(MATRIX_HOMESERVER_URL / MATRIX_ACCESS_TOKEN / MATRIX_USER_ID)"
-                " — skipping."
-            )
-    elif ms.homeserver_url or ms.access_token or ms.user_id:
-        logger.warning(
-            "Matrix credentials are configured but the adapter is not enabled. "
-            "Add 'matrix' to ENABLED_ADAPTERS to start the Matrix adapter."
-        )
+    matrix = config.matrix_adapter
+    if matrix.homeserver_url and matrix.access_token and matrix.user_id:
+        router.register(MatrixAdapter(matrix))
+        logger.info("Registered MatrixAdapter.")
 
     return router
 
 
 def build_one_shot_router(
-    settings: Settings,
     graph: GraphType | None = None,
     *,
     prompt: str | None = None,
@@ -211,18 +196,17 @@ async def _run(argv: list[str] | None = None) -> None:
         if args.working_dir:
             os.chdir(Path(args.working_dir).expanduser().resolve())
 
-        settings = get_settings()
+        config = load_config("config/config.yaml")
 
         if args.prompt:
-            router = build_one_shot_router(settings, prompt=args.prompt)
+            router = build_one_shot_router(prompt=args.prompt)
         elif args.batch_input and args.batch_output:
             router = build_one_shot_router(
-                settings,
                 batch_input=args.batch_input,
                 batch_output=args.batch_output,
             )
         else:
-            router = build_router(settings)
+            router = build_router(config)
 
         await router.run()
     finally:

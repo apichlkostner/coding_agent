@@ -9,7 +9,7 @@ import random
 
 import nio
 
-from agent.config import MatrixSettings
+from agent.config import MatrixAdapter
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
@@ -42,28 +42,28 @@ class MatrixAdapter(BaseAdapter):
 
     Parameters
     ----------
-    settings:
-        :class:`~agent.config.MatrixSettings` with homeserver URL, access
+    config:
+        :class:`~agent.config.MatrixAdapter` with homeserver URL, access
         token, and bot user ID.
     """
 
     adapter_id = "matrix"
 
-    def __init__(self, settings: MatrixSettings) -> None:
-        self._settings = settings
+    def __init__(self, config: MatrixAdapter) -> None:
+        self._config = config
         client_config = nio.AsyncClientConfig(store_sync_tokens=True)
         self._client = nio.AsyncClient(
-            settings.homeserver_url,
-            settings.user_id,
-            device_id=settings.device_id,
-            store_path=settings.store_path,
+            config.homeserver_url,
+            config.user_id,
+            device_id=config.device_id,
+            store_path=config.store_path,
             config=client_config,
         )
-        self._client.user_id = settings.user_id
-        self._client.access_token = settings.access_token
-        self._client.device_id = settings.device_id
-        if settings.store_path:
-            os.makedirs(settings.store_path, exist_ok=True)
+        self._client.user_id = config.user_id
+        self._client.access_token = config.access_token
+        self._client.device_id = config.device_id
+        if config.store_path:
+            os.makedirs(config.store_path, exist_ok=True)
             self._client.load_store()
         self._router: MessageRouter | None = None
 
@@ -77,7 +77,7 @@ class MatrixAdapter(BaseAdapter):
 
         async def _on_message(room: nio.MatrixRoom, event: nio.RoomMessageText) -> None:
             # Ignore the bot's own messages to prevent loops.
-            if event.sender == self._settings.user_id:
+            if event.sender == self._config.user_id:
                 return
 
             inbound = InboundMessage(
@@ -164,7 +164,7 @@ class MatrixAdapter(BaseAdapter):
             room_id=message.reply_channel_id,
             message_type="m.room.message",
             content=content,
-            ignore_unverified_devices=self._settings.ignore_unverified_devices,
+            ignore_unverified_devices=self._config.ignore_unverified_devices,
         )
         if isinstance(response, nio.RoomSendError):
             logger.error(
