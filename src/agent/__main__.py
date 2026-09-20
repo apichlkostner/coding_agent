@@ -31,6 +31,7 @@ from agent.adapters.matrix_adapter import MatrixAdapter
 from agent.adapters.prompt_adapter import PromptAdapter
 from agent.adapters.terminal_adapter import TerminalAdapter
 from agent.config import Config, load_config
+from agent.logging_config import configure_logging
 from agent.router import AgentService, MessageRouter
 
 if TYPE_CHECKING:
@@ -41,31 +42,6 @@ load_dotenv()
 GraphType = Any
 
 logger = logging.getLogger(__name__)
-
-
-def _setup_logging() -> None:
-    """Configure root logger: INFO to ``agent.log`` file + WARNING to stderr."""
-    root = logging.getLogger()
-    if root.handlers:
-        # Already configured (e.g. during tests) — don't add duplicate handlers.
-        return
-
-    root.setLevel(logging.INFO)
-    fmt = logging.Formatter(
-        "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    fh = logging.FileHandler("agent.log", encoding="utf-8")
-    fh.setLevel(logging.INFO)
-    fh.setFormatter(fmt)
-
-    sh = logging.StreamHandler()
-    sh.setLevel(logging.WARNING)
-    sh.setFormatter(fmt)
-
-    root.addHandler(fh)
-    root.addHandler(sh)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -225,7 +201,8 @@ def main() -> None:
     This is the function registered as a console-script in ``pyproject.toml``.
     It *must* be synchronous so the script runner can call it directly.
     """
-    _setup_logging()
+    configure_logging()
+
     asyncio.run(_run(sys.argv[1:]))
 
 

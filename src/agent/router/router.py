@@ -22,6 +22,7 @@ import asyncio
 import logging
 from collections import OrderedDict
 
+from agent.logging_context import thread_id_var
 from agent.router.agent_service import AgentService
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import InboundMessage, OutboundMessage
@@ -125,21 +126,31 @@ class MessageRouter:
     async def _process(self, message: InboundMessage) -> None:
         """Run the agent for *message*, serialised per thread_id."""
         lock = self._get_or_create_lock(message.thread_id)
+
         async with lock:
-            adapter = self._adapters.get(message.adapter_id)
-            if adapter is None:
-                logger.error(
-                    "No adapter registered for id '%s'; dropping message.",
-                    message.adapter_id,
-                )
-                return
+            token = thread_id_var.set(message.thread_id)
             try:
+                adapter = self._adapters.get(message.adapter_id)
+                if adapter is None:
+                    logger.error(
+                        "No adapter registered for id '%s'; dropping message.",
+                        message.adapter_id,
+                    )
+                    return
+
+                logger.info(
+                    "Received Discord request from %s: %s",
+                    message.reply_channel_id,
+                    message.content[:100],
+                )
                 async for outbound in self._agent_service.run(message):
                     await adapter.send(outbound)
             except Exception as exc:  # noqa: BLE001
                 # AgentService already yields error messages, but guard
                 # against anything that escapes the generator.
                 logger.error("Unhandled error in _process: %s", exc)
+            finally:
+                thread_id_var.reset(token)
 
     # ------------------------------------------------------------------
     # Outbound path  (agent-initiated → adapter)

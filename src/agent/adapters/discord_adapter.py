@@ -33,7 +33,6 @@ class _DiscordClient(discord.Client):
         )
 
     async def on_message(self, message: discord.Message) -> None:
-        logger.info("%s: %s", message.author, message.content)
         if message.author.bot:
             return
         await self._adapter._handle_message(message)
@@ -116,6 +115,12 @@ class DiscordAdapter(BaseAdapter):
                 )
                 return
 
+        logger.info(
+            "Sending Discord response to %s: %s",
+            message.reply_channel_id,
+            message.content[:100],
+        )
+
         content = message.content
         for i in range(0, len(content), _DISCORD_MAX_LEN):
             await channel.send(content[i : i + _DISCORD_MAX_LEN])
@@ -137,6 +142,7 @@ class DiscordAdapter(BaseAdapter):
             reply_channel_id=str(message.channel.id),
             user_id=str(message.author.id),
         )
+
         # Keep the typing indicator active until the agent finishes.
         async with message.channel.typing():
             task = await self._router.dispatch(inbound)

@@ -106,8 +106,8 @@ def call_model(state: AgentState) -> dict:  # type: ignore[type-arg]
     Returns
     -------
     dict
-        ``{"messages": [ai_response]}`` — appended by the ``add_messages``
-        reducer.
+        ``{"messages": [ai_response], "thread_id": [thread id]}`` — appended
+        by the ``add_messages`` reducer.
     """
     messages = list(state["messages"])
 
