@@ -274,11 +274,11 @@ def _config_dict(**overrides: object) -> dict[str, object]:
         "model_provider": {
             "name": "litellm",
             "api": "openai_compatible",
-            "api_key": "sk-test",
+            "api_key": "${TEST_AGENT_API_KEY}",
             "endpoint": "https://api.example.com",
         },
         "model": {"name": "gpt-5.6-luna", "effort": "high"},
-        "discord_adapter": {"bot_token": "token"},
+        "discord_adapter": {"bot_token": "${TEST_AGENT_BOT_TOKEN}"},
         "heartbeat": {
             "interval": 30,
             "prompt_file": "HEARTBEAT.md",
@@ -287,7 +287,7 @@ def _config_dict(**overrides: object) -> dict[str, object]:
         },
         "matrix_adapter": {
             "homeserver_url": "https://matrix.example.com",
-            "access_token": "syt_token",
+            "access_token": "${TEST_AGENT_ACCESS_TOKEN}",
             "user_id": "@bot:matrix.example.com",
         },
     }
@@ -303,7 +303,12 @@ def _write_config(tmp_path: Path, data: object) -> str:
 
 
 class TestConfigLoading:
-    def test_loads_model_and_provider(self, tmp_path: Path) -> None:
+    def test_loads_model_and_provider(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TEST_AGENT_API_KEY", "sk-test")
+        monkeypatch.setenv("TEST_AGENT_BOT_TOKEN", "token")
+        monkeypatch.setenv("TEST_AGENT_ACCESS_TOKEN", "syt_token")
         config = load_config(_write_config(tmp_path, _config_dict()))
 
         assert isinstance(config, Config)
@@ -312,7 +317,12 @@ class TestConfigLoading:
         assert config.model_provider.api == "openai_compatible"
         assert config.model_provider.endpoint == "https://api.example.com"
 
-    def test_loads_adapter_sections(self, tmp_path: Path) -> None:
+    def test_loads_adapter_sections(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TEST_AGENT_API_KEY", "sk-test")
+        monkeypatch.setenv("TEST_AGENT_BOT_TOKEN", "token")
+        monkeypatch.setenv("TEST_AGENT_ACCESS_TOKEN", "syt_token")
         config = load_config(_write_config(tmp_path, _config_dict()))
 
         assert config.discord_adapter.bot_token == "token"
@@ -326,6 +336,8 @@ class TestConfigLoading:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("TEST_AGENT_API_KEY", "sk-from-env")
+        monkeypatch.setenv("TEST_AGENT_BOT_TOKEN", "token")
+        monkeypatch.setenv("TEST_AGENT_ACCESS_TOKEN", "syt_token")
         data = _config_dict()
         provider = data["model_provider"]
         assert isinstance(provider, dict)

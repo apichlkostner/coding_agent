@@ -25,11 +25,11 @@ def valid_config_dict() -> dict[str, object]:
         "model_provider": {
             "name": "litellm",
             "api": "openai_compatible",
-            "api_key": "sk-test",
+            "api_key": "${OPENAI_API_KEY}",
             "endpoint": "https://api.example.com",
         },
         "model": {"name": "gpt-5.6-luna", "effort": "high"},
-        "discord_adapter": {"bot_token": "token"},
+        "discord_adapter": {"bot_token": "${DISCORD_BOT_TOKEN}"},
         "heartbeat": {
             "interval": 30,
             "prompt_file": "HEARTBEAT.md",
@@ -38,7 +38,7 @@ def valid_config_dict() -> dict[str, object]:
         },
         "matrix_adapter": {
             "homeserver_url": "https://matrix.example.com",
-            "access_token": "syt_token",
+            "access_token": "${MATRIX_ACCESS_TOKEN}",
             "user_id": "@bot:matrix.example.com",
         },
     }
@@ -186,6 +186,8 @@ class TestLoadConfigExpansion:
         valid_config_dict: dict[str, object],
     ) -> None:
         monkeypatch.setenv("EXPAND_TEST_API_KEY", "sk-from-env")
+        monkeypatch.setenv("DISCORD_BOT_TOKEN", "discord-token")
+        monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "matrix-token")
         provider = valid_config_dict["model_provider"]
         assert isinstance(provider, dict)
         provider["api_key"] = "${EXPAND_TEST_API_KEY}"
@@ -201,10 +203,13 @@ class TestLoadConfigExpansion:
         valid_config_dict: dict[str, object],
     ) -> None:
         monkeypatch.delenv("EXPAND_TEST_ABSENT_KEY", raising=False)
-        provider = valid_config_dict["model_provider"]
-        assert isinstance(provider, dict)
-        provider["api_key"] = "${EXPAND_TEST_ABSENT_KEY:-sk-default}"
+        monkeypatch.setenv("OPENAI_API_KEY", "openai-token")
+        monkeypatch.setenv("DISCORD_BOT_TOKEN", "discord-token")
+        monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "matrix-token")
+        heartbeat = valid_config_dict["heartbeat"]
+        assert isinstance(heartbeat, dict)
+        heartbeat["output_channel"] = "${EXPAND_TEST_ABSENT_KEY:-fallback-channel}"
 
         config = load_config(write_config(tmp_path, valid_config_dict))
 
-        assert config.model_provider.api_key == "sk-default"
+        assert config.heartbeat.output_channel == "fallback-channel"

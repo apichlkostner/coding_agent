@@ -57,3 +57,4 @@ nio_store
 .test_project
 agent.log
 element-keys.txt
+.python-version

@@ -12,8 +12,9 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from agent.config.schema import Config
 from agent.config.env_expand import EnvVarError, expand_env
+from agent.config.schema import Config
+from agent.config.secret_check import SecretError, secret_check
 
 
 class ConfigError(Exception):
@@ -53,8 +54,11 @@ def load_config(path: str) -> Config:
         raise ConfigError(f"Config root must be a mapping in {path}")
 
     try:
+        secret_check(raw)
         expanded_conf = expand_env(raw)
         return Config(**expanded_conf)
+    except SecretError as e:
+        raise ConfigError(f"Secret in config {path}: {e}") from e
     except EnvVarError as e:
         raise ConfigError(f"Missing environment variable in {path}: {e}") from e
     except ValidationError as e:

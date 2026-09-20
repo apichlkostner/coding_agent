@@ -49,7 +49,7 @@ The application always loads `config/config.yaml` on startup. Its top-level sect
 | `heartbeat` | Interval, prompt file, and optional output destination |
 | `matrix_adapter` | Matrix homeserver, credentials, and crypto store settings |
 
-The checked-in [`config/config.yaml`](config/config.yaml) is a complete example. Values can be literal YAML values or environment substitutions. `${VAR}` requires the variable to be set; `${VAR:-default}` supplies a fallback.
+The checked-in [`config/config.yaml`](config/config.yaml) is a complete example. Non-secret values can be literal YAML values or environment substitutions. Secret values (`api_key`, `access_token`, and `bot_token`) must use environment substitutions: `${VAR}` requires the variable to be set, while `${VAR:-}` allows an empty value for an optional integration. Non-empty secret defaults are rejected.
 
 Optional integrations still use environment variables: `TAVILY_API_KEY` enables web search, and `LANGCHAIN_TRACING_V2`, `LANGCHAIN_ENDPOINT`, `LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT` configure LangSmith tracing.
 
@@ -87,7 +87,7 @@ The batch output is newline-delimited JSON and includes the source line number, 
 model_provider:
     name: ollama
     api: openai_compatible
-    api_key: ollama
+    api_key: ${OLLAMA_API_KEY:-}
     endpoint: http://localhost:11434/v1
 model:
     name: qwen2.5-coder:14b
@@ -95,6 +95,9 @@ model:
 ```
 
 > **Note:** Tool-calling reliability varies between local models. Prefer instruction-tuned/chat models with strong tool-use support.
+
+Leave `OLLAMA_API_KEY` unset for a local Ollama server. For Ollama Cloud, set
+`OLLAMA_API_KEY` in the environment and use the cloud endpoint.
 
 ```bash
 uv run agent
