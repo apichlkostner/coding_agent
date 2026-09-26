@@ -30,7 +30,18 @@ from pydantic import SecretStr
 from agent.config import Config, load_config
 from agent.nodes import get_llm_from_config
 from agent.state import AgentState
-from agent.tools import *
+from agent.tools import (
+    bash,
+    calculate,
+    create_directory,
+    get_current_datetime,
+    get_tools,
+    grep,
+    list_directory,
+    read_file,
+    replace_in_file,
+    write_file,
+)
 
 # ---------------------------------------------------------------------------
 # Tool tests — no LLM required
@@ -211,9 +222,9 @@ class TestGrepTool:
             }
         )
 
-        assert (
-            result
-            == "['tests/testfolder/folder1/test.py:2:def test():', 'tests/testfolder/folder1/test.cpp: lines 2, 3 (2 matches)']"
+        assert result == (
+            "['tests/testfolder/folder1/test.py:2:def test():', "
+            "'tests/testfolder/folder1/test.cpp: lines 2, 3 (2 matches)']"
         )
 
     def test_grep_too_many_lines(self) -> None:
@@ -243,9 +254,9 @@ class TestListDirectoryTool:
         dir_path: str = "tests/testfolder"
         result = list_directory.invoke({"path": dir_path})
 
-        assert (
-            result
-            == "[('.venv', 'dir'), ('file1', 'file'), ('folder1', 'dir'), ('file2', 'file')]"
+        assert result == (
+            "[('.venv', 'dir'), ('file1', 'file'), "
+            "('folder1', 'dir'), ('file2', 'file')]"
         )
 
 
@@ -453,7 +464,8 @@ class TestGraphStructure:
     def test_prompt_builder_appends_agents_md(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Prompt builder should append AGENTS.md content after the base system prompt."""
+        """Prompt builder should append AGENTS.md content after the base system
+        prompt."""
         from pathlib import Path
 
         from agent.prompts import PromptBuilder

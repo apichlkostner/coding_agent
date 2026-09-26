@@ -38,7 +38,7 @@ Or call ``build_graph()`` to get a fresh compiled graph (useful in tests).
 from __future__ import annotations
 
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 

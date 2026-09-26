@@ -19,7 +19,6 @@ from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -259,7 +258,8 @@ class TestAgentService:
         assert "graph exploded" in results[0].content
 
     async def test_skips_steps_without_messages_key(self) -> None:
-        """Nodes that don't produce a 'messages' key (e.g. __interrupt__) are ignored."""
+        """Nodes that don't produce a 'messages' key (e.g. __interrupt__) are
+        ignored."""
         graph = _make_graph(
             {"some_node": {"other_key": "value"}},
             {"agent": {"messages": [AIMessage(content="Done.")]}},
@@ -349,7 +349,8 @@ class TestAgentService:
         assert results[0].metadata["msg_type"] == "response"
 
     async def test_inbound_metadata_does_not_override_msg_type(self) -> None:
-        """msg_type and node_name from AgentService take precedence over inbound metadata."""
+        """msg_type and node_name from AgentService take precedence over inbound
+        metadata."""
         import dataclasses
 
         graph = _make_graph(

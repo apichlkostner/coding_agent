@@ -1,6 +1,6 @@
 import ast
 import operator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from langchain_core.tools import tool
 
@@ -18,7 +18,7 @@ def calculate(expression: str) -> str:
     calculate("2 ** 10")        -> "1024"
     calculate("(3 + 4) * 6")    -> "42"
     """
-    _OPERATORS: dict[type, object] = {
+    operators: dict[type, object] = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
         ast.Mult: operator.mul,
@@ -35,12 +35,12 @@ def calculate(expression: str) -> str:
             case ast.Constant(value=v) if isinstance(v, int | float):
                 return float(v)
             case ast.BinOp(left=left, op=op, right=right):
-                op_fn = _OPERATORS.get(type(op))
+                op_fn = operators.get(type(op))
                 if op_fn is None:
                     raise ValueError(f"Unsupported operator: {type(op).__name__}")
                 return op_fn(_eval(left), _eval(right))  # type: ignore[operator]
             case ast.UnaryOp(op=op, operand=operand):
-                op_fn = _OPERATORS.get(type(op))
+                op_fn = operators.get(type(op))
                 if op_fn is None:
                     raise ValueError(f"Unsupported operator: {type(op).__name__}")
                 return op_fn(_eval(operand))  # type: ignore[operator]
@@ -64,4 +64,4 @@ def get_current_datetime() -> str:
     -------
     get_current_datetime() -> "2025-04-30T12:00:00+00:00"
     """
-    return datetime.now(tz=timezone.utc).isoformat()
+    return datetime.now(tz=UTC).isoformat()

@@ -35,7 +35,8 @@ from agent.logging_config import configure_logging
 from agent.router import AgentService, MessageRouter
 
 if TYPE_CHECKING:
-    from langgraph.graph.state import CompiledStateGraph
+    pass
+#     from langgraph.graph.state import CompiledStateGraph
 
 GraphType = Any
 

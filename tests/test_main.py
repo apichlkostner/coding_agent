@@ -7,7 +7,6 @@ All tests run without a real LLM or Discord token.
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -28,7 +27,6 @@ from agent.config import Config
 from agent.router import AgentService, InboundMessage, MessageRouter
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import OutboundMessage
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -243,7 +241,8 @@ class TestBuildRouter:
         assert isinstance(router, MessageRouter)
 
     def test_uses_default_graph_when_none_given(self) -> None:
-        """build_router without an explicit graph must not raise at construction time."""
+        """build_router without an explicit graph must not raise at construction
+        time."""
         # No graph passed → lazy-imports agent.graph.graph (safe, no API call).
         router = build_router(_config())
         assert "terminal" in router._adapters
@@ -278,7 +277,8 @@ class _CollectorAdapter(BaseAdapter):
 
 class TestIntegration:
     async def test_full_stack_delivers_response(self) -> None:
-        """Router + real compiled graph (mocked LLM) → stub adapter receives response."""
+        """Router + real compiled graph (mocked LLM) → stub adapter receives
+        response."""
         from agent.graph import build_graph
         from agent.nodes import _get_llm_with_tools
 
@@ -311,7 +311,8 @@ class TestIntegration:
         assert responses[0].reply_channel_id == "output"
 
     async def test_full_stack_preserves_thread_history(self) -> None:
-        """Two messages on the same thread share conversation history via checkpointer."""
+        """Two messages on the same thread share conversation history via
+        checkpointer."""
         from agent.graph import build_graph
         from agent.nodes import _get_llm_with_tools
 
@@ -416,7 +417,8 @@ class TestIntegration:
         assert "LLM exploded" in errors[0].content
 
     async def test_build_router_integration_with_mock_graph(self) -> None:
-        """build_router() wired end-to-end: dispatch → stub adapter receives response."""
+        """build_router() wired end-to-end: dispatch → stub adapter receives
+        response."""
         # Patch build_router's adapter list to include our stub.
         graph = _mock_graph("Router integration answer.")
         service = AgentService(graph)

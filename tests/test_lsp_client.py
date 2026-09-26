@@ -17,8 +17,8 @@ from unittest.mock import patch
 import pytest
 
 from agent.lsp import (
-    LanguageServerClientManager,
     LanguageServerClient,
+    LanguageServerClientManager,
     ServerSpec,
     WorkspaceContext,
     detect_workspace_context,
@@ -26,13 +26,13 @@ from agent.lsp import (
     path_to_uri,
     uri_to_path,
 )
-from agent.lsp.types import WorkspaceSymbol
-from agent.lsp.registry import _configure_client
 from agent.lsp.framing import (
     LSPProtocolError,
     read_message,
     write_message,
 )
+from agent.lsp.registry import _configure_client
+from agent.lsp.types import WorkspaceSymbol
 
 # ---------------------------------------------------------------------------
 # In-memory bidirectional pipe
@@ -386,7 +386,7 @@ class TestRegistryWorkspaceDetection:
 
 
 class _FakeManagedClient:
-    created: list["_FakeManagedClient"] = []
+    created: list[_FakeManagedClient] = []
 
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs

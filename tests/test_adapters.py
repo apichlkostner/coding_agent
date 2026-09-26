@@ -1008,7 +1008,7 @@ class TestHeartbeatAdapterStart:
 def _mock_router_with_forwarding() -> tuple[
     MagicMock, list[InboundMessage], list[OutboundMessage]
 ]:
-    """Router mock that records both dispatched inbound and send_to outbound messages."""
+    """Router mock recording both dispatched inbound and send_to outbound."""
     dispatched: list[InboundMessage] = []
     forwarded: list[OutboundMessage] = []
 

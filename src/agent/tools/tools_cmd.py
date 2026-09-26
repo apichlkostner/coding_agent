@@ -31,6 +31,10 @@ def bash(command: str, timeout: int = 60, description: str = "") -> str:
         result = subprocess.run(
             command, timeout=timeout, shell=True, text=True, capture_output=True
         )
-        return f"exit_code: {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        return (
+            f"exit_code: {result.returncode}\n"
+            f"stdout: {result.stdout}\n"
+            f"stderr: {result.stderr}"
+        )
     except Exception as err:
         return f"Error: {err}"

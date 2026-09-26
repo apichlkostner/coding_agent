@@ -46,7 +46,8 @@ def _cpp_context(path: Path, workspace_root: Path) -> WorkspaceContext:
 class _DummyClient:
     def __getattr__(self, name: str) -> Any:  # pragma: no cover - defensive
         raise AssertionError(
-            f"_DummyClient.{name} was called but the request should have been rejected first"
+            f"_DummyClient.{name} was called but the request should have been "
+            "rejected first"
         )
 
 

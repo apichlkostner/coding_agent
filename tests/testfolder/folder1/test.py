@@ -1,3 +1,3 @@
 
 def test():
-    return True;
+    return True
