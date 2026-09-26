@@ -10,6 +10,7 @@ class JsonFormatter(logging.Formatter):
         payload = {
             "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
             "level": record.levelname,
+            "message_id": getattr(record, "message_id", "-"),
             "thread_id": getattr(record, "thread_id", "-"),
             "event": {},
             "message": record.getMessage(),

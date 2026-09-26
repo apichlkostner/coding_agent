@@ -21,8 +21,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
+from uuid import uuid4
 
-from agent.logging_context import thread_id_var
+from agent.logging_context import RunContext, run_context_var
 from agent.router.agent_service import AgentService
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import InboundMessage, OutboundMessage
@@ -128,7 +129,9 @@ class MessageRouter:
         lock = self._get_or_create_lock(message.thread_id)
 
         async with lock:
-            token = thread_id_var.set(message.thread_id)
+            token = run_context_var.set(
+                RunContext(uuid4().hex[:12], message.reply_channel_id)
+            )
             try:
                 adapter = self._adapters.get(message.adapter_id)
                 if adapter is None:
@@ -150,7 +153,7 @@ class MessageRouter:
                 # against anything that escapes the generator.
                 logger.error("Unhandled error in _process: %s", exc)
             finally:
-                thread_id_var.reset(token)
+                run_context_var.reset(token)
 
     # ------------------------------------------------------------------
     # Outbound path  (agent-initiated → adapter)
