@@ -2,7 +2,7 @@
 name: Research
 description: Fast read-only codebase exploration and Q&A subagent. Prefer over manually chaining multiple search and file-reading operations to avoid cluttering the main conversation. Safe to call in parallel. Specify thoroughness: quick, medium, or thorough.
 argument-hint: Describe WHAT you're looking for and desired thoroughness (quick/medium/thorough)
-model: ['GLM-5.3-Flash (customendpoint)', 'GPT-5.6 Luna (customendpoint)']
+model: ['DeepSeek-V4.1-Flash (customendpoint)', 'GLM-5.3-Flash (customendpoint)', 'GPT-6 Luna LiteLLM (customendpoint)']
 target: vscode
 user-invocable: true
 tools: ['search', 'read', 'web', 'vscode/memory', 'execute/getTerminalOutput', 'execute/testFailure']

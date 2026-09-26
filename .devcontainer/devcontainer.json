@@ -31,7 +31,7 @@
   // Post-create: install all Python dependencies (including dev group).
   // uv reads pyproject.toml and writes a .venv inside the workspace.
   // ---------------------------------------------------------------------------
-  "postCreateCommand": "uv sync --all-groups && rtk init --copilot",
+  "postCreateCommand": "uv sync --all-groups",
 
   "remoteEnv": {
     "OLLAMA_BASE_URL": "http://host.docker.internal:11434",

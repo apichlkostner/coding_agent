@@ -16,13 +16,6 @@ RUN su vscode -c "source /usr/local/share/nvm/nvm.sh && nvm install ${NODE_VERSI
 # ---------------------------------------------------------------------------
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# rtk
-# latest would be https://github.com/rtk-ai/rtk/releases/latest/download/rtk-x86_64-unknown-linux-musl.tar.gz
-ARG RTK_VERSION=0.49.0
-RUN curl -fsSL https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/rtk-x86_64-unknown-linux-musl.tar.gz \
-    | tar -xz -C /usr/local/bin rtk \
-    && chmod +x /usr/local/bin/rtk
-
 # ---------------------------------------------------------------------------
 # additional installs
 # ---------------------------------------------------------------------------
