@@ -792,7 +792,7 @@ class TestHeartbeatAdapterSend:
             msg_type="response",
             node_name="agent",
         )
-        with caplog.at_level(logging.INFO, logger="agent.adapters.heartbeat_adapter"):
+        with caplog.at_level(logging.DEBUG, logger="agent.adapters.heartbeat_adapter"):
             await adapter.send(msg)
         assert any("All good." in r.message for r in caplog.records)
 
@@ -803,7 +803,7 @@ class TestHeartbeatAdapterSend:
 
         adapter = HeartbeatAdapter()
         msg = _outbound(content="bash(...)", msg_type="tool_call", node_name="agent")
-        with caplog.at_level(logging.INFO, logger="agent.adapters.heartbeat_adapter"):
+        with caplog.at_level(logging.DEBUG, logger="agent.adapters.heartbeat_adapter"):
             await adapter.send(msg)
         assert any("→" in r.message for r in caplog.records)
 
@@ -816,7 +816,7 @@ class TestHeartbeatAdapterSend:
         msg = _outbound(
             content="exit_code: 0", msg_type="tool_result", node_name="tools"
         )
-        with caplog.at_level(logging.INFO, logger="agent.adapters.heartbeat_adapter"):
+        with caplog.at_level(logging.DEBUG, logger="agent.adapters.heartbeat_adapter"):
             await adapter.send(msg)
         assert any("←" in r.message for r in caplog.records)
 
@@ -844,7 +844,7 @@ class TestHeartbeatAdapterSend:
             content="weird",
             metadata={"msg_type": "alien"},
         )
-        with caplog.at_level(logging.INFO, logger="agent.adapters.heartbeat_adapter"):
+        with caplog.at_level(logging.DEBUG, logger="agent.adapters.heartbeat_adapter"):
             await adapter.send(msg)
         assert any("weird" in r.message for r in caplog.records)
 
@@ -860,7 +860,7 @@ class TestHeartbeatAdapterSend:
             content="done",
             metadata={"msg_type": "response"},  # no node_name
         )
-        with caplog.at_level(logging.INFO, logger="agent.adapters.heartbeat_adapter"):
+        with caplog.at_level(logging.DEBUG, logger="agent.adapters.heartbeat_adapter"):
             await adapter.send(msg)
         assert any("[agent]" in r.message for r in caplog.records)
 
