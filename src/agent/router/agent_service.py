@@ -63,6 +63,11 @@ class AgentService:
                 metadata=meta,
             )
 
+        logger.info(
+            "%s",
+            message.content,
+            extra={"event": "user-message"},
+        )
         try:
             async for step in self._graph.astream(
                 {"messages": [HumanMessage(content=message.content)]},
@@ -78,29 +83,46 @@ class AgentService:
                 last_msg = node_output["messages"][-1]
 
                 if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+                    for tc in last_msg.tool_calls:
+                        logger.info(
+                            "%s",
+                            tc["args"],
+                            extra={"event": {"type": "tool-call", "tool": tc["name"]}},
+                        )
                     calls = ", ".join(
                         tc["name"] + "(" + str(tc["args"])[:50] + ")"
                         for tc in last_msg.tool_calls
                     )
-                    logger.info("[%s] tool calls: %s", node_name, calls)
                     if self._verbose:
                         yield _make(calls, "tool_call", node_name)
 
                 elif hasattr(last_msg, "name") and last_msg.name is not None:
-                    # ToolMessage — execution result
-                    preview = last_msg.content[:200]
-                    if len(last_msg.content) > 200:
-                        preview += "…"
-                    logger.info("[%s] tool result: %s", node_name, preview)
-                    if self._verbose:
-                        yield _make(preview, "tool_result", node_name)
+                    # ToolMessage(s) — one execution result per requested call.
+                    # ``ToolNode`` returns every result in a single update, so
+                    # iterate the whole list instead of only the last message.
+                    for tool_msg in node_output["messages"]:
+                        preview = tool_msg.content[:200]
+                        if len(tool_msg.content) > 200:
+                            preview += "…"
+                        logger.info(
+                            "%s",
+                            preview,
+                            extra={
+                                "event": {
+                                    "type": "tool-result",
+                                    "tool": getattr(tool_msg, "name", ""),
+                                }
+                            },
+                        )
+                        if self._verbose:
+                            yield _make(preview, "tool_result", node_name)
 
                 else:
                     # Final agent response
                     logger.info(
-                        "[%s] response: %s",
-                        node_name,
+                        "%s",
                         last_msg.content[:100],
+                        extra={"event": "agent-response"},
                     )
                     yield _make(last_msg.content, "response", node_name)
 

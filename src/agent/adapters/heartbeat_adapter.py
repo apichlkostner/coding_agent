@@ -125,12 +125,14 @@ class HeartbeatAdapter(BaseAdapter):
         node = message.metadata.get("node_name") or "agent"
 
         if message.msg_type == "tool_call":
-            logger.info("[%s] \u2192 %s", node, message.content)
+            logger.debug("[%s] \u2192 %s", node, message.content)
         elif message.msg_type == "tool_result":
-            logger.info("[%s] \u2190 %s", node, message.content)
+            logger.debug("[%s] \u2190 %s", node, message.content)
         elif message.msg_type == "response":
-            logger.info("[%s] %s", node, message.content)
+            logger.debug(
+                "[%s] %s", node, message.content, extra={"event": "chat-response"}
+            )
         elif message.msg_type == "error":
             logger.error("Heartbeat error: %s", message.content)
         else:
-            logger.info("%s", message.content)
+            logger.debug("%s", message.content)

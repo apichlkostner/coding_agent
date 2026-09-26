@@ -58,7 +58,9 @@ def _outbound(
 def _make_graph(*steps: dict[str, Any]) -> MagicMock:
     """Return a mock graph whose ``astream`` yields *steps*."""
 
-    async def _mock_astream(*args: Any, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+    async def _mock_astream(
+        *args: Any, **kwargs: Any
+    ) -> AsyncGenerator[dict[str, Any], None]:
         for step in steps:
             yield step
 
@@ -179,18 +181,31 @@ class TestAgentService:
         graph = _make_graph({"agent": {"messages": [AIMessage(content="Hi")]}})
         service = AgentService(graph)
 
-        results = [msg async for msg in service.run(_inbound(adapter_id="discord", reply_channel_id="chan-99"))]
+        results = [
+            msg
+            async for msg in service.run(
+                _inbound(adapter_id="discord", reply_channel_id="chan-99")
+            )
+        ]
 
         assert results[0].adapter_id == "discord"
         assert results[0].reply_channel_id == "chan-99"
 
     async def test_verbose_yields_tool_call(self) -> None:
         ai_with_tools = AIMessage(content="")
-        ai_with_tools.tool_calls = [{"name": "calculate", "args": {"expr": "1+1"}, "id": "tc1"}]  # type: ignore[assignment]
+        ai_with_tools.tool_calls = [
+            {"name": "calculate", "args": {"expr": "1+1"}, "id": "tc1"}
+        ]  # type: ignore[assignment]
 
         graph = _make_graph(
             {"agent": {"messages": [ai_with_tools]}},
-            {"tools": {"messages": [ToolMessage(content="2", tool_call_id="tc1", name="calculate")]}},
+            {
+                "tools": {
+                    "messages": [
+                        ToolMessage(content="2", tool_call_id="tc1", name="calculate")
+                    ]
+                }
+            },
             {"agent": {"messages": [AIMessage(content="The answer is 2.")]}},
         )
         service = AgentService(graph, verbose=True)
@@ -204,11 +219,19 @@ class TestAgentService:
 
     async def test_non_verbose_suppresses_tool_messages(self) -> None:
         ai_with_tools = AIMessage(content="")
-        ai_with_tools.tool_calls = [{"name": "calculate", "args": {"expr": "1+1"}, "id": "tc1"}]  # type: ignore[assignment]
+        ai_with_tools.tool_calls = [
+            {"name": "calculate", "args": {"expr": "1+1"}, "id": "tc1"}
+        ]  # type: ignore[assignment]
 
         graph = _make_graph(
             {"agent": {"messages": [ai_with_tools]}},
-            {"tools": {"messages": [ToolMessage(content="2", tool_call_id="tc1", name="calculate")]}},
+            {
+                "tools": {
+                    "messages": [
+                        ToolMessage(content="2", tool_call_id="tc1", name="calculate")
+                    ]
+                }
+            },
             {"agent": {"messages": [AIMessage(content="The answer is 2.")]}},
         )
         service = AgentService(graph, verbose=False)
@@ -276,6 +299,36 @@ class TestAgentService:
         # 200 chars of content + ellipsis
         assert results[0].content == "x" * 200 + "…"
 
+    async def test_parallel_tool_calls_yield_one_result_each(self) -> None:
+        """A single tools update carrying N ToolMessages yields N tool_results."""
+        ai_with_tools = AIMessage(content="")
+        ai_with_tools.tool_calls = [  # type: ignore[assignment]
+            {"name": "calculate", "args": {"expr": "1+1"}, "id": "tc1"},
+            {"name": "bash", "args": {"cmd": "ls"}, "id": "tc2"},
+        ]
+
+        graph = _make_graph(
+            {"agent": {"messages": [ai_with_tools]}},
+            {
+                "tools": {
+                    "messages": [
+                        ToolMessage(content="2", tool_call_id="tc1", name="calculate"),
+                        ToolMessage(
+                            content="file.txt", tool_call_id="tc2", name="bash"
+                        ),
+                    ]
+                }
+            },
+            {"agent": {"messages": [AIMessage(content="Done.")]}},
+        )
+        service = AgentService(graph, verbose=True)
+
+        results = [msg async for msg in service.run(_inbound())]
+
+        tool_results = [m for m in results if m.msg_type == "tool_result"]
+        assert len(tool_results) == 2
+        assert [m.content for m in tool_results] == ["2", "file.txt"]
+
     async def test_inbound_metadata_forwarded_to_all_outbound(self) -> None:
         """Arbitrary inbound metadata keys must appear on every outbound message."""
         import dataclasses
@@ -284,7 +337,9 @@ class TestAgentService:
             {"agent": {"messages": [AIMessage(content="reply")]}},
         )
         service = AgentService(graph)
-        inbound = dataclasses.replace(_inbound(), metadata={"event_id": "evt-42", "room_name": "#test"})
+        inbound = dataclasses.replace(
+            _inbound(), metadata={"event_id": "evt-42", "room_name": "#test"}
+        )
         results = [msg async for msg in service.run(inbound)]
 
         assert len(results) == 1
@@ -355,12 +410,15 @@ class TestMessageRouterDispatch:
         assert len(adapter.sent) == 1
         assert adapter.sent[0].content == "Hi there!"
 
-    async def test_dispatch_unknown_adapter_logs_and_does_not_raise(self, caplog: pytest.LogCaptureFixture) -> None:
+    async def test_dispatch_unknown_adapter_logs_and_does_not_raise(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         service = MagicMock(spec=AgentService)
         router = MessageRouter(service)
         # no adapter registered
 
         import logging
+
         with caplog.at_level(logging.ERROR, logger="agent.router.router"):
             task = await router.dispatch(_inbound(adapter_id="ghost"))
             await task
@@ -427,6 +485,7 @@ class TestMessageRouterSendTo:
         router = MessageRouter(service)
 
         import logging
+
         with caplog.at_level(logging.ERROR, logger="agent.router.router"):
             await router.send_to(_outbound(adapter_id="nonexistent"))
 

@@ -37,8 +37,6 @@ from agent.router import AgentService, MessageRouter
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
 
-load_dotenv()
-
 GraphType = Any
 
 logger = logging.getLogger(__name__)
@@ -201,6 +199,10 @@ def main() -> None:
     This is the function registered as a console-script in ``pyproject.toml``.
     It *must* be synchronous so the script runner can call it directly.
     """
+    # .env is already loaded in ``agent/__init__.py`` (before the graph is
+    # built at import time); keep the call here as a no-op safety net for
+    # direct ``python -m agent`` runs that bypass the package import order.
+    load_dotenv()
     configure_logging()
 
     asyncio.run(_run(sys.argv[1:]))

@@ -28,7 +28,7 @@ class _DiscordClient(discord.Client):
         self._adapter = adapter
 
     async def on_ready(self) -> None:
-        logger.info(
+        logger.debug(
             "Discord ready: %s (ID: %s)", self.user, self.user.id if self.user else "?"
         )
 
@@ -115,10 +115,11 @@ class DiscordAdapter(BaseAdapter):
                 )
                 return
 
-        logger.info(
+        logger.debug(
             "Sending Discord response to %s: %s",
             message.reply_channel_id,
             message.content[:100],
+            extra={"event": "chat-response"},
         )
 
         content = message.content

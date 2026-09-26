@@ -21,6 +21,7 @@ Optional tools (enabled when the matching API key is set)
 
 from __future__ import annotations
 
+import logging
 import os
 
 from langchain_core.tools import BaseTool
@@ -49,21 +50,30 @@ from . import (
     write_file,
 )
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Optional tools
 # ---------------------------------------------------------------------------
 
 
 def _make_web_search_tool() -> BaseTool | None:
-    """Return a Tavily web-search tool if TAVILY_API_KEY is configured."""
+    """Return a Tavily web-search tool if TAVILY_API_KEY is configured.
+
+    Relies on ``.env`` being loaded in ``agent/__init__.py`` — this runs at
+    import time, before ``main()``.
+    """
     if not os.getenv("TAVILY_API_KEY"):
+        logger.debug("No TAVILY_API_KEY defined")
         return None
     try:
         from langchain_tavily import TavilySearch  # noqa: PLC0415
 
-        return TavilySearch(max_results=5)
+        search_tool = TavilySearch(max_results=5, name="web_search")
+        return search_tool
     except ImportError:
         # langchain-tavily not installed — silently skip.
+        logger.warning("langchain-tavily not installed")
         return None
 
 

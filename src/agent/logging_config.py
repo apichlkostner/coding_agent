@@ -11,9 +11,14 @@ class JsonFormatter(logging.Formatter):
             "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
             "level": record.levelname,
             "thread_id": getattr(record, "thread_id", "-"),
-            "logger": record.name,
+            "event": {},
             "message": record.getMessage(),
+            "logger": record.name,
         }
+
+        event = getattr(record, "event", None)
+        if event is not None:
+            payload["event"] = event
 
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
@@ -28,6 +33,9 @@ def configure_logging() -> None:
         return
 
     root.setLevel(logging.INFO)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("nio").setLevel(logging.WARNING)
+    logging.getLogger("discord").setLevel(logging.WARNING)
 
     formatter = JsonFormatter()
 
