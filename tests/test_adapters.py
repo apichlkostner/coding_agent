@@ -14,13 +14,12 @@ import nio
 import pytest
 
 from agent.adapters.batch_adapter import BatchAdapter
-from agent.adapters.discord_adapter import DiscordAdapter, _DiscordClient
+from agent.adapters.discord_adapter import DiscordAdapter
 from agent.adapters.heartbeat_adapter import HeartbeatAdapter
 from agent.adapters.terminal_adapter import TerminalAdapter
 from agent.config import Heartbeat
 from agent.config import MatrixAdapter as MatrixConfig
 from agent.router.messages import InboundMessage, OutboundMessage
-from agent.router.router import MessageRouter
 
 if TYPE_CHECKING:
     from agent.adapters.matrix_adapter import MatrixAdapter
@@ -455,7 +454,7 @@ class TestTerminalAdapterAcceptHandler:
         handler = adapter._make_accept_handler()
         handler(buff)
 
-        adapter._app.exit.assert_called_once()
+        adapter._app.exit.assert_called_once()  # type: ignore[union-attr]
         buff.reset.assert_called_once()
 
     async def test_quit_variants_exit_app(self) -> None:
@@ -467,7 +466,7 @@ class TestTerminalAdapterAcceptHandler:
             handler = adapter._make_accept_handler()
             handler(buff)
 
-            adapter._app.exit.assert_called_once()
+            adapter._app.exit.assert_called_once()  # type: ignore[union-attr]
 
     async def test_empty_input_does_not_exit_or_dispatch(self) -> None:
         adapter = self._make_adapter_with_mock_app()
@@ -477,8 +476,8 @@ class TestTerminalAdapterAcceptHandler:
         handler = adapter._make_accept_handler()
         handler(buff)
 
-        adapter._app.exit.assert_not_called()
-        adapter._app.create_background_task.assert_not_called()
+        adapter._app.exit.assert_not_called()  # type: ignore[union-attr]
+        adapter._app.create_background_task.assert_not_called()  # type: ignore[union-attr]
         buff.reset.assert_called_once()
 
     async def test_input_while_processing_ignored(self) -> None:
@@ -490,7 +489,7 @@ class TestTerminalAdapterAcceptHandler:
         handler = adapter._make_accept_handler()
         handler(buff)
 
-        adapter._app.create_background_task.assert_not_called()
+        adapter._app.create_background_task.assert_not_called()  # type: ignore[union-attr]
         buff.reset.assert_called_once()
 
     async def test_valid_input_creates_background_task(self) -> None:
@@ -501,7 +500,7 @@ class TestTerminalAdapterAcceptHandler:
             created.append(coro)
             coro.close()
 
-        adapter._app.create_background_task = fake_create_task
+        adapter._app.create_background_task = fake_create_task  # type: ignore[union-attr]
         buff = MagicMock()
         buff.text = "hello world"
 
@@ -1312,7 +1311,7 @@ class TestMatrixAdapterStart:
         sender: str = "@user:matrix.org",
         body: str = "Hello!",
         event_id: str = "$evt001",
-    ) -> nio.RoomMessageText:
+    ) -> nio.Event:
 
         source = {
             "event_id": event_id,
@@ -1322,7 +1321,7 @@ class TestMatrixAdapterStart:
             "content": {"msgtype": "m.text", "body": body},
             "room_id": "!room:matrix.org",
         }
-        return nio.RoomMessageText.from_dict(source)
+        return nio.RoomMessageText.from_dict(source)  # type: ignore[return-value]
 
     def _make_nio_room(
         self,
@@ -1421,7 +1420,7 @@ class TestMatrixAdapterStart:
         adapter._client.sync = fail_twice
         adapter._client.sync_forever = AsyncMock(side_effect=asyncio.CancelledError())
         adapter._client.stop_sync_forever = MagicMock()
-        adapter._client.next_batch = None
+        adapter._client.next_batch = None  # type: ignore[assignment]
         sleep_calls: list[float] = []
 
         async def mock_sleep(delay: float) -> None:

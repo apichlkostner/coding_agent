@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any, cast
 
 import discord
 
@@ -23,7 +24,7 @@ class _DiscordClient(discord.Client):
     avoids the ``start(token)`` vs ``BaseAdapter.start(router)`` signature clash.
     """
 
-    def __init__(self, adapter: DiscordAdapter, **kwargs: object) -> None:
+    def __init__(self, adapter: DiscordAdapter, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._adapter = adapter
 
@@ -98,7 +99,8 @@ class DiscordAdapter(BaseAdapter):
             channel_id = int(message.reply_channel_id)
         except ValueError:
             logger.error(
-                "DiscordAdapter: reply_channel_id %r is not a valid integer; dropping message.",
+                "DiscordAdapter: reply_channel_id %r is not a valid integer; "
+                "dropping message.",
                 message.reply_channel_id,
             )
             return
@@ -115,6 +117,8 @@ class DiscordAdapter(BaseAdapter):
                 )
                 return
 
+        messageable = cast("discord.abc.Messageable", channel)
+
         logger.debug(
             "Sending Discord response to %s: %s",
             message.reply_channel_id,
@@ -124,14 +128,17 @@ class DiscordAdapter(BaseAdapter):
 
         content = message.content
         for i in range(0, len(content), _DISCORD_MAX_LEN):
-            await channel.send(content[i : i + _DISCORD_MAX_LEN])
+            await messageable.send(content[i : i + _DISCORD_MAX_LEN])
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     async def _handle_message(self, message: discord.Message) -> None:
-        """Build an :class:`InboundMessage` and dispatch it, holding the typing indicator."""
+        """Build an :class:`InboundMessage` and dispatch it.
+
+        Holds the typing indicator for the duration of agent processing.
+        """
         if self._router is None:
             logger.error("DiscordAdapter._handle_message called before router was set.")
             return

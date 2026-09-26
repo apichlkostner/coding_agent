@@ -26,6 +26,7 @@ from agent.lsp import (
     path_to_uri,
     uri_to_path,
 )
+from agent.lsp.types import WorkspaceSymbol
 from agent.lsp.registry import _configure_client
 from agent.lsp.framing import (
     LSPProtocolError,
@@ -472,7 +473,7 @@ class TestLanguageServerClientManager:
             configuration_builder=lambda _context: {"custom": {"enabled": True}},
         )
 
-        await _configure_client(client, spec, context)
+        await _configure_client(client, spec, context)  # type: ignore[arg-type]
 
         assert client.configuration_changes == [{"custom": {"enabled": True}}]
 
@@ -520,7 +521,7 @@ class TestCompletionRequest:
             test_file = workspace / "a.cpp"
             test_file.write_text("int main() {}\n")
             result = await client.completion(str(test_file), 1, 0)
-            assert result["items"] == [{"label": "foo"}]
+            assert result.get("items") == [{"label": "foo"}]
             sent = mock.requests_by_method["textDocument/completion"]
             assert sent[0]["params"]["textDocument"]["uri"] == path_to_uri(test_file)
         finally:
@@ -536,7 +537,7 @@ class TestCompletionRequest:
             f = workspace / "a.cpp"
             f.write_text("//\n")
             result = await client.completion(str(f), 0, 0)
-            assert result["items"] == [{"label": "bar"}]
+            assert result.get("items") == [{"label": "bar"}]
         finally:
             await client.stop()
             pipe.close()
@@ -564,7 +565,7 @@ class TestDefinitionReferences:
             f.write_text("//\n")
             result = await client.definition(str(f), 0, 0)
             assert len(result) == 1
-            assert result[0]["uri"] == "file:///x.cpp"
+            assert result[0].get("uri") == "file:///x.cpp"
         finally:
             await client.stop()
             pipe.close()
@@ -602,7 +603,7 @@ class TestSymbols:
             f = workspace / "a.cpp"
             f.write_text("void foo() {}\n")
             syms = await client.document_symbol(str(f))
-            assert syms and syms[0]["name"] == "foo"
+            assert syms and syms[0].get("name") == "foo"
         finally:
             await client.stop()
             pipe.close()
@@ -614,7 +615,7 @@ class TestSymbols:
             mock.set_canned("workspace/symbol", [{"name": "global_fn", "kind": 12}])
             await _start_wired(client, mock, pipe)
             result = await client.workspace_symbol("global")
-            assert result[0]["name"] == "global_fn"
+            assert result[0].get("name") == "global_fn"
             sent = mock.requests_by_method["workspace/symbol"]
             assert sent[0]["params"]["query"] == "global"
         finally:
@@ -659,9 +660,9 @@ class TestHierarchies:
             f = workspace / "a.h"
             f.write_text("class Base {};\n")
             items = await client.prepare_type_hierarchy(str(f), 0, 6)
-            assert items[0]["name"] == "Base"
+            assert items[0].get("name") == "Base"
             sub = await client.type_hierarchy_subtypes(items[0])
-            assert sub[0]["name"] == "Derived"
+            assert sub[0].get("name") == "Derived"
         finally:
             await client.stop()
             pipe.close()
@@ -693,9 +694,9 @@ class TestHierarchies:
             f = workspace / "main.cpp"
             f.write_text("int main(){helper();}\n")
             items = await client.prepare_call_hierarchy(str(f), 0, 4)
-            assert items[0]["name"] == "main"
+            assert items[0].get("name") == "main"
             out = await client.call_hierarchy_outgoing(items[0])
-            assert out[0]["to"]["name"] == "helper"
+            assert out[0].get("to", {}).get("name") == "helper"
             inc = await client.call_hierarchy_incoming(items[0])
             assert inc == []
         finally:
@@ -833,7 +834,7 @@ class TestDiagnostics:
             await asyncio.sleep(0)
             diags = client.get_diagnostics(str(f))
             assert len(diags) == 1
-            assert diags[0]["message"] == "oops"
+            assert diags[0].get("message") == "oops"
         finally:
             await client.stop()
             pipe.close()
@@ -865,7 +866,7 @@ class TestDiagnostics:
 
             diags = await waiter
             assert len(diags) == 1
-            assert diags[0]["message"] == "oops again"
+            assert diags[0].get("message") == "oops again"
             assert client.diagnostics_generation(str(f)) == generation + 1
         finally:
             await client.stop()
@@ -1024,6 +1025,7 @@ class TestClangdIntegration:
             # have been explicitly opened. Open the file before querying.
             await client.did_open(str(main_cpp), main_cpp.read_text())
             found = False
+            syms: list[WorkspaceSymbol] = []
             for _ in range(40):
                 syms = await client.workspace_symbol("main")
                 if any(s.get("name") == "main" for s in syms):

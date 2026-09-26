@@ -58,7 +58,7 @@ def get_llm_from_config(config: Config) -> BaseChatModel:
         from langchain_anthropic import ChatAnthropic  # noqa: PLC0415
 
         return ChatAnthropic(
-            model=model,
+            model=model,  # type: ignore[call-arg]
             api_key=SecretStr(provider.api_key),
             base_url=provider.endpoint,
         )

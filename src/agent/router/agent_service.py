@@ -10,6 +10,7 @@ import logging
 from collections.abc import AsyncGenerator
 
 from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
 from agent.router.messages import InboundMessage, OutboundMessage
@@ -52,7 +53,7 @@ class AgentService:
         The ``adapter_id`` and ``reply_channel_id`` on every yielded message
         are copied from *message* so the router knows where to send it.
         """
-        config = {"configurable": {"thread_id": message.thread_id}}
+        config: RunnableConfig = {"configurable": {"thread_id": message.thread_id}}
 
         def _make(content: str, msg_type: str, node_name: str = "") -> OutboundMessage:
             meta = {**message.metadata, "msg_type": msg_type, "node_name": node_name}

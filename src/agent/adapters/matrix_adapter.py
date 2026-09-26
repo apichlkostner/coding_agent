@@ -9,7 +9,7 @@ import random
 
 import nio
 
-from agent.config import MatrixAdapter
+import agent.config
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
@@ -49,7 +49,7 @@ class MatrixAdapter(BaseAdapter):
 
     adapter_id = "matrix"
 
-    def __init__(self, config: MatrixAdapter) -> None:
+    def __init__(self, config: agent.config.MatrixAdapter) -> None:
         self._config = config
         client_config = nio.AsyncClientConfig(store_sync_tokens=True)
         self._client = nio.AsyncClient(
@@ -75,9 +75,11 @@ class MatrixAdapter(BaseAdapter):
         """Connect to Matrix and run the sync loop until cancelled."""
         self._router = router
 
-        async def _on_message(room: nio.MatrixRoom, event: nio.RoomMessageText) -> None:
+        async def _on_message(room: nio.MatrixRoom, event: nio.Event) -> None:
             # Ignore the bot's own messages to prevent loops.
             if event.sender == self._config.user_id:
+                return
+            if not isinstance(event, nio.RoomMessageText):
                 return
 
             inbound = InboundMessage(
@@ -94,7 +96,7 @@ class MatrixAdapter(BaseAdapter):
             await router.dispatch(inbound)  # fire-and-forget
 
         async def _on_decryption_failure(
-            room: nio.MatrixRoom, event: nio.MegolmEvent
+            room: nio.MatrixRoom, event: nio.Event
         ) -> None:
             logger.warning(
                 "MatrixAdapter could not decrypt message in room %s from %s",

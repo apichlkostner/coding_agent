@@ -81,6 +81,15 @@ ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
 
 # ---------------------------------------------------------------------------
+# Pyright — static type checking
+# ---------------------------------------------------------------------------
+[tool.pyright]
+include = ["src", "tests"]
+exclude = [
+    "tests/fixtures",  # intentionally broken sources for LSP diagnostics
+]
+
+# ---------------------------------------------------------------------------
 # Pytest
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]

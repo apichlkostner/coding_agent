@@ -19,6 +19,7 @@ import json
 import os
 import types
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,6 +29,7 @@ from pydantic import SecretStr
 
 from agent.config import Config, load_config
 from agent.nodes import get_llm_from_config
+from agent.state import AgentState
 from agent.tools import *
 
 # ---------------------------------------------------------------------------
@@ -268,9 +270,9 @@ class TestGetTools:
 # ---------------------------------------------------------------------------
 
 
-def _config_dict(**overrides: object) -> dict[str, object]:
+def _config_dict(**overrides: Any) -> dict[str, Any]:
     """Baseline YAML config payload; tests override single sections as needed."""
-    data: dict[str, object] = {
+    data: dict[str, Any] = {
         "model_provider": {
             "name": "litellm",
             "api": "openai_compatible",
@@ -295,7 +297,7 @@ def _config_dict(**overrides: object) -> dict[str, object]:
     return data
 
 
-def _write_config(tmp_path: Path, data: object) -> str:
+def _write_config(tmp_path: Path, data: Any) -> str:
     """Serialise *data* to ``config.yaml`` under *tmp_path* and return its path."""
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(data))

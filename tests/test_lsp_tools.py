@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import shutil
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from typing import Any
 
@@ -496,7 +496,7 @@ class TestLspToolsPyrightIntegration:
         await reset_client_manager()
 
     @pytest.fixture(autouse=True)
-    def _chdir_project(self, lsp_python_project: Path) -> AsyncGenerator[None, None]:
+    def _chdir_project(self, lsp_python_project: Path) -> Generator[None, None, None]:
         original = os.getcwd()
         os.chdir(lsp_python_project)
         try:

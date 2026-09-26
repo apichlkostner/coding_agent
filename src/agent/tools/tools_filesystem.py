@@ -79,7 +79,7 @@ def read_file(path: str, offset: int = 0, lines: int = 0) -> str:
     """
     try:
         if _is_subpath(path, strict=True):
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 count = 0
                 result = ""
                 for line in f:
@@ -171,14 +171,17 @@ def replace_in_file(
     try:
         if _is_subpath(path, strict=True):
             path = Path(path)
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 content = f.read()
                 count = content.count(old_string)
 
                 if count == 0:
                     return f"Error: {old_string} not found in file {path.as_posix()}"
                 elif count > 1 and not replace_all:
-                    return f"Error: {old_string} found {count} times in file {path.as_posix()}"
+                    return (
+                        f"Error: {old_string} found {count} times "
+                        f"in file {path.as_posix()}"
+                    )
 
                 new_content = content.replace(old_string, new_string)
 
@@ -206,11 +209,13 @@ def grep(
         directory: Directory to search
         file_pattern: List like ['*.py', '*.js'] — None means all files
         case_sensitive: If False, use re.IGNORECASE
-        skip_dirs: Set of directory names to skip like {'.git', 'node_modules', '__pycache__'}
+        skip_dirs: Set of directory names to skip like
+            {'.git', 'node_modules', '__pycache__'}
 
     Example
     -------
-    grep("test", ".", ["*.py"], False, {".git", ".venv"}) -> ['tests/testfolder/folder1/test.py:2:def test():']
+    grep("test", ".", ["*.py"], False, {".git", ".venv"})
+        -> ['tests/testfolder/folder1/test.py:2:def test():']
     """
     if file_pattern is None:
         file_pattern = ["*"]
@@ -250,7 +255,9 @@ def grep(
                     "total_matches": raw_match_count,
                     "shown": len(compressed_matches[:max_results]),
                     "results": compressed_matches[:max_results],
-                    "hint": "Refine with a more specific pattern or a subdirectory path",
+                    "hint": (
+                        "Refine with a more specific pattern or a subdirectory path"
+                    ),
                 }
             )
         return str(compressed_matches)

@@ -186,7 +186,7 @@ class LanguageServerClient:
         self._stderr_task: asyncio.Task[None] | None = None
 
         self._next_id = 1
-        self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._pending: dict[int, asyncio.Future[Any]] = {}
         self._request_lock = asyncio.Lock()
         self._server_caps: InitializeResult | None = None
 
@@ -351,8 +351,6 @@ class LanguageServerClient:
                     await self._process.wait()
                 except ProcessLookupError:
                     pass
-            except ProcessLookupError:
-                pass
         self._process = None
 
         # Reject any pending requests so callers don't hang forever.
@@ -521,7 +519,7 @@ class LanguageServerClient:
         self._next_id += 1
 
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future[dict[str, Any]] = loop.create_future()
+        fut: asyncio.Future[Any] = loop.create_future()
         self._pending[req_id] = fut
 
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "method": method}
@@ -568,7 +566,7 @@ class LanguageServerClient:
         )
         self._documents[uri] = _DocumentState(
             uri=uri,
-            language_id=item["languageId"],
+            language_id=item.get("languageId", "plaintext"),
             version=1,
             text=text,
         )
@@ -775,12 +773,12 @@ class LanguageServerClient:
 
     def server_capabilities(self) -> dict[str, Any]:
         """Return the initialize capabilities payload from the current server."""
-        if not isinstance(self._server_caps, dict):
+        if self._server_caps is None:
             return {}
         capabilities = self._server_caps.get("capabilities")
-        if isinstance(capabilities, dict):
-            return capabilities
-        return {}
+        if capabilities is None:
+            return {}
+        return dict(capabilities)
 
     def diagnostics_generation(self, path: str) -> int:
         """Return the publication generation for *path* diagnostics."""

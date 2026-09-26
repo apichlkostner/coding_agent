@@ -7,6 +7,8 @@ directly, without touching the filesystem; the YAML loading path is covered
 in ``test_config.py``.
 """
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -25,7 +27,7 @@ def valid_provider() -> dict[str, str]:
 
 
 @pytest.fixture
-def valid_config(valid_provider: dict[str, str]) -> dict[str, object]:
+def valid_config(valid_provider: dict[str, str]) -> dict[str, Any]:
     """Baseline full config payload built from :func:`valid_provider`."""
     return {
         "model_provider": valid_provider,
@@ -119,20 +121,20 @@ class TestMatrixAdapter:
 class TestConfig:
     """Validation of the top-level :class:`Config` model."""
 
-    def test_valid_config(self, valid_config: dict[str, object]) -> None:
+    def test_valid_config(self, valid_config: dict[str, Any]) -> None:
         config = Config(**valid_config)
         assert config.model.name == "gpt-5.6-luna"
         assert config.model_provider.api == "openai_compatible"
         assert config.discord_adapter.bot_token == "token"
         assert config.matrix_adapter.user_id == "@bot:matrix.example.com"
 
-    def test_missing_section_rejected(self, valid_config: dict[str, object]) -> None:
+    def test_missing_section_rejected(self, valid_config: dict[str, Any]) -> None:
         del valid_config["model"]
         with pytest.raises(ValidationError):
             Config(**valid_config)
 
     def test_invalid_nested_value_propagates(
-        self, valid_config: dict[str, object]
+        self, valid_config: dict[str, Any]
     ) -> None:
         valid_config["model_provider"] = {
             "name": "openai",

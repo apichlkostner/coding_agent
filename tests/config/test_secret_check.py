@@ -10,6 +10,7 @@ this module.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -19,7 +20,7 @@ from agent.config.secret_check import SecretError, secret_check
 
 
 @pytest.fixture
-def valid_config_dict() -> dict[str, object]:
+def valid_config_dict() -> dict[str, Any]:
     """Baseline config payload; tests mutate single keys as needed."""
     return {
         "model_provider": {
@@ -44,7 +45,7 @@ def valid_config_dict() -> dict[str, object]:
     }
 
 
-def write_config(tmp_path: Path, data: object) -> str:
+def write_config(tmp_path: Path, data: Any) -> str:
     """Serialise *data* to ``config.yaml`` under *tmp_path* and return its path."""
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(data))
@@ -52,33 +53,33 @@ def write_config(tmp_path: Path, data: object) -> str:
 
 
 class TestSecretCheck:
-    def test_no_secrets(self, valid_config_dict: dict[str, object]) -> None:
+    def test_no_secrets(self, valid_config_dict: dict[str, Any]) -> None:
         secret_check(valid_config_dict)
 
-    def test_secret_key_provider(self, valid_config_dict: dict[str, object]) -> None:
+    def test_secret_key_provider(self, valid_config_dict: dict[str, Any]) -> None:
 
         valid_config_dict["model_provider"]["api_key"] = "sk-12345abcde"
         with pytest.raises(SecretError, match=r"model_provider\.api_key"):
             secret_check(valid_config_dict)
 
-    def test_secret_key_discord(self, valid_config_dict: dict[str, object]) -> None:
+    def test_secret_key_discord(self, valid_config_dict: dict[str, Any]) -> None:
         valid_config_dict["discord_adapter"]["bot_token"] = "sk-12345abcde"
         with pytest.raises(SecretError, match=r"discord_adapter\.bot_token"):
             secret_check(valid_config_dict)
 
-    def test_secret_key_matrix(self, valid_config_dict: dict[str, object]) -> None:
+    def test_secret_key_matrix(self, valid_config_dict: dict[str, Any]) -> None:
         valid_config_dict["matrix_adapter"]["access_token"] = "sk-12345abcde"
         with pytest.raises(SecretError, match=r"matrix_adapter\.access_token"):
             secret_check(valid_config_dict)
 
     def test_placeholder_with_empty_default_accepted(
-        self, valid_config_dict: dict[str, object]
+        self, valid_config_dict: dict[str, Any]
     ) -> None:
         valid_config_dict["model_provider"]["api_key"] = "${OPENAI_API_KEY:-}"
         secret_check(valid_config_dict)
 
     def test_placeholder_with_non_empty_default_rejected(
-        self, valid_config_dict: dict[str, object]
+        self, valid_config_dict: dict[str, Any]
     ) -> None:
         valid_config_dict["model_provider"]["api_key"] = (
             "${OPENAI_API_KEY:-sk-fallback}"
@@ -87,19 +88,19 @@ class TestSecretCheck:
             secret_check(valid_config_dict)
 
     def test_placeholder_with_surrounding_text_rejected(
-        self, valid_config_dict: dict[str, object]
+        self, valid_config_dict: dict[str, Any]
     ) -> None:
         valid_config_dict["model_provider"]["api_key"] = "Bearer ${OPENAI_API_KEY}"
         with pytest.raises(SecretError, match=r"model_provider\.api_key"):
             secret_check(valid_config_dict)
 
-    def test_empty_secret_rejected(self, valid_config_dict: dict[str, object]) -> None:
+    def test_empty_secret_rejected(self, valid_config_dict: dict[str, Any]) -> None:
         valid_config_dict["discord_adapter"]["bot_token"] = ""
         with pytest.raises(SecretError, match=r"discord_adapter\.bot_token"):
             secret_check(valid_config_dict)
 
     def test_non_string_secret_rejected(
-        self, valid_config_dict: dict[str, object]
+        self, valid_config_dict: dict[str, Any]
     ) -> None:
         valid_config_dict["matrix_adapter"]["access_token"] = 12345
         with pytest.raises(SecretError, match=r"matrix_adapter\.access_token"):
@@ -112,7 +113,7 @@ class TestSecretCheck:
         secret_check({"model_provider": "not-a-mapping"})
 
     def test_first_offending_key_reported(
-        self, valid_config_dict: dict[str, object]
+        self, valid_config_dict: dict[str, Any]
     ) -> None:
         valid_config_dict["model_provider"]["api_key"] = "sk-12345abcde"
         valid_config_dict["discord_adapter"]["bot_token"] = "sk-12345abcde"
@@ -125,7 +126,7 @@ class TestLoadConfigExpansion:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        valid_config_dict: dict[str, object],
+        valid_config_dict: dict[str, Any],
     ) -> None:
         provider = valid_config_dict["model_provider"]
         assert isinstance(provider, dict)
@@ -137,7 +138,7 @@ class TestLoadConfigExpansion:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        valid_config_dict: dict[str, object],
+        valid_config_dict: dict[str, Any],
     ) -> None:
         monkeypatch.setenv("SECRET_CHECK_API_KEY", "sk-from-env")
         monkeypatch.setenv("DISCORD_BOT_TOKEN", "discord-token")
