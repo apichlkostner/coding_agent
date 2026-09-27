@@ -5,16 +5,20 @@ A LangGraph ReAct (Reasoning + Acting) AI agent specialised for coding tasks. Th
 ## Features
 
 - **ReAct loop** built with LangGraph `StateGraph`
-- **Multi-provider** support: OpenAI (default `gpt-5.4-nano`), Anthropic (default `claude-haiku-4-5`), and Ollama local models (default `qwen2.5-coder:14b`)
+- **Multi-provider** support: OpenAI-compatible endpoints (default `gpt-6-luna`), Anthropic compatible endpoints
 - **Built-in tools**: safe arithmetic evaluator, current UTC datetime
 - **Persistent memory**: key-value store (`store_memory`/`read_memory`) backed by JSON file, survives restarts
 - **Notification buffer**: agent-initiated alerts via `send_notification` — only forwarded to output channel when explicitly triggered
 - **Filesystem tools**: read, write, list, create directory, replace-in-file, grep
 - **Shell tool**: run arbitrary bash commands (see [Security](#security))
+- **Tree-sitter tools**: parse, query, and extract symbols from Python, JavaScript, TypeScript, TSX, Rust, Go, C, and C++ sources
+- **Generic LSP tools**: definition, references, document/workspace symbols, rename planning, and diagnostics via `clangd` (C/C++) and `pyright-langserver` (Python)
 - **Optional web search** via Tavily (enabled when `TAVILY_API_KEY` is set)
-- **Message router**: clean adapter abstraction — terminal REPL, Discord bot, and periodic heartbeat run concurrently through a single router
+- **Message router**: clean adapter abstraction — terminal REPL, Discord bot, Matrix bot, and periodic heartbeat run concurrently through a single router
+- **One-shot modes**: `--prompt` for a single instruction, `--batch-input`/`--batch-output` for line-oriented JSONL runs
 - **Heartbeat**: periodic agent-initiated runs driven by a Markdown prompt file; agent controls forwarding via `send_notification`
 - **Per-session memory**: conversations persisted per thread via `InMemorySaver`
+- **Structured JSON logging**: rotating daily log file with per-run `message_id`/`thread_id` context
 - **Full test suite** runnable without live API keys
 
 ## Requirements
@@ -43,13 +47,15 @@ The application always loads `config/config.yaml` on startup. Its top-level sect
 
 | Section | Description |
 |---|---|
-| `model_provider` | Provider name, API protocol, endpoint, and API key |
+| `model_provider` | Provider name, API protocol (`openai`, `openai_compatible`, or `anthropic`), endpoint, and API key |
 | `model` | Model name and reasoning effort |
-| `discord_adapter` | Discord bot token |
-| `heartbeat` | Interval, prompt file, and optional output destination |
-| `matrix_adapter` | Matrix homeserver, credentials, and crypto store settings |
+| `discord_adapter` | Discord bot token (empty disables the adapter) |
+| `heartbeat` | Interval, prompt file, and optional output adapter/channel |
+| `matrix_adapter` | Matrix homeserver, credentials, device ID, crypto store path, and unverified-device policy |
 
-The checked-in [`config/config.yaml`](config/config.yaml) is a complete example. Non-secret values can be literal YAML values or environment substitutions. Secret values (`api_key`, `access_token`, and `bot_token`) must use environment substitutions: `${VAR}` requires the variable to be set, while `${VAR:-}` allows an empty value for an optional integration. Non-empty secret defaults are rejected.
+Adapter registration is driven by configuration, not a separate enable list: the terminal adapter is always registered; Discord, heartbeat, and Matrix are registered only when their respective sections are non-empty.
+
+The checked-in [`config/config.yaml`](config/config.yaml) is a complete example. Non-secret values can be literal YAML values or environment substitutions. Secret values (`model_provider.api_key`, `matrix_adapter.access_token`, and `discord_adapter.bot_token`) must use environment substitutions: `${VAR}` requires the variable to be set, while `${VAR:-}` allows an empty value for an optional integration. Non-empty secret defaults are rejected.
 
 Optional integrations still use environment variables: `TAVILY_API_KEY` enables web search, and `LANGCHAIN_TRACING_V2`, `LANGCHAIN_ENDPOINT`, `LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT` configure LangSmith tracing.
 
@@ -63,6 +69,14 @@ Run the agent once on a direct instruction without starting the long-running ada
 
 ```bash
 uv run agent --prompt "Summarize the current git status and mention any TODOs."
+```
+
+#### Working directory
+
+Pass a positional path or `--workdir` to change into a directory before the agent starts (useful with the sandbox scripts):
+
+```bash
+uv run agent --workdir /path/to/project
 ```
 
 #### Batch mode
@@ -105,9 +119,10 @@ uv run agent
 
 This starts all enabled adapters concurrently inside a single process:
 
-- **Terminal REPL** — type messages directly in the terminal. The agent prints `[node] response` as steps complete. Type `quit`, `exit`, `q`, or press Ctrl-D to stop.
+- **Terminal REPL** — a full-screen `prompt_toolkit` interface with a scrollable output area and a live status toolbar. Tool calls print as `[node] → …`, tool results as `[node] ← …`, and final responses as `[node] …`. Type `quit`, `exit`, `q`, or press Ctrl-D to stop.
 - **Discord bot** — if `DISCORD_BOT_TOKEN` is set, the bot comes online and responds to messages in any channel it can read. A "typing…" indicator is shown while the agent works.
-- **Heartbeat** — reads `HEARTBEAT.md` (configurable) and runs the agent on that prompt every N seconds. Output is written to `agent.log`. The agent controls when to forward messages to the output channel by calling `send_notification`.
+- **Matrix bot** — if the Matrix credentials are set, the bot syncs joined rooms and replies with `m.in_reply_to` threading.
+- **Heartbeat** — reads the configured prompt file (default `config/HEARTBEAT.md`) and runs the agent on that prompt every N seconds. Output is written to `logs/agent.log`. The agent controls when to forward messages to the output channel by calling `send_notification`.
 
 All interfaces share the same agent graph and per-session conversation memory. Each source gets its own LangGraph thread ID so histories are kept isolated.
 
@@ -164,16 +179,16 @@ about, call send_notification with the message.
 
 Then configure the interval and, optionally, where to send the results:
 
-```ini
+```yaml
 # config/config.yaml
 heartbeat:
     interval: 600
     prompt_file: config/HEARTBEAT.md
     output_adapter: discord
-    output_channel: ${HEARTBEAT_OUTPUT_CHANNEL}
+    output_channel: ${HEARTBEAT_OUTPUT_CHANNEL:-}
 ```
 
-When `HEARTBEAT_OUTPUT_ADAPTER` and `HEARTBEAT_OUTPUT_CHANNEL` are both set, the agent can forward messages by calling `send_notification`. Normal response text is only logged — nothing reaches the output channel unless the agent explicitly calls the tool. If neither is set, output goes only to `agent.log`.
+When both `output_adapter` and `output_channel` are non-empty, the agent can forward messages by calling `send_notification`. Normal response text is only logged — nothing reaches the output channel unless the agent explicitly calls the tool. If either is empty, output goes only to `logs/agent.log`.
 
 This pattern is useful for state-change detection. For example, using the memory tools to track previous state:
 
@@ -187,28 +202,43 @@ Check the weather at my location.
 - If nothing changed, do NOT call send_notification.
 ```
 
-> **Note:** `HEARTBEAT_OUTPUT_ADAPTER` must match the `adapter_id` of a registered adapter (`"discord"`, `"matrix"`, `"terminal"`, or any future adapter). The output adapter must also be enabled and have valid credentials.
+> **Note:** `output_adapter` must match the `adapter_id` of a registered adapter (`"discord"`, `"matrix"`, `"terminal"`, or any future adapter). The output adapter must also be enabled and have valid credentials.
 
 ## Project Structure
 
 ```
 src/agent/
-├── __init__.py              # Public API: exports build_graph, graph
-├── __main__.py              # Entry point: build_router(), main()
-├── config.py                # Settings dataclasses; LLM factory
+├── __init__.py              # Public API: exports build_graph, graph; loads .env
+├── __main__.py              # Entry point: parse_args(), build_router(), main()
 ├── graph.py                 # LangGraph StateGraph assembly
-├── nodes.py                 # Graph node functions (call_model)
+├── nodes.py                 # Graph node functions (call_model, get_llm_from_config)
+├── prompts.py               # PromptBuilder — system prompt + AGENTS.md injection
 ├── state.py                 # AgentState TypedDict
+├── logging_config.py        # JSON formatter, rotating file handler
+├── logging_context.py       # RunContext contextvar + ThreadIdFilter
+│
+├── config/                  # YAML configuration loading
+│   ├── config.py            # load_config() → validated Config
+│   ├── schema.py            # Pydantic models (Config, ModelProvider, …)
+│   ├── env_expand.py        # ${VAR} / ${VAR:-default} expansion
+│   └── secret_check.py      # Rejects literal secrets in YAML
+│
+├── lsp/                     # Language Server Protocol client
+│   ├── client.py            # LanguageServerClient (async stdio client)
+│   ├── framing.py           # LSP message framing (Content-Length headers)
+│   ├── registry.py          # Backend specs, workspace detection, client pool
+│   └── types.py             # Typed dicts for LSP payloads
 │
 ├── tools/                   # Tool implementations
 │   ├── __init__.py          # Re-exports all tool functions
-│   ├── general.py           # Core tools (calculate, datetime)
+│   ├── general.py           # Core tools (calculate, get_current_datetime)
 │   ├── tools.py             # get_tools() aggregator + web_search
 │   ├── tools_filesystem.py  # Filesystem tools (read/write/list/grep/replace)
 │   ├── tools_cmd.py         # Shell tool (bash)
 │   ├── tools_memory.py      # Persistent key-value memory (store_memory, read_memory)
 │   ├── tools_notifications.py  # Notification buffer (send_notification)
-│   └── tools_treesitter.py  # Tree-sitter parsing & query tools
+│   ├── tools_treesitter.py  # Tree-sitter parsing & query tools
+│   └── tools_lsp.py         # Generic LSP tools (lsp_*)
 │
 ├── router/                  # Routing layer
 │   ├── messages.py          # InboundMessage / OutboundMessage dataclasses
@@ -217,16 +247,28 @@ src/agent/
 │   └── router.py            # MessageRouter — hub connecting adapters ↔ agent
 │
 └── adapters/                # Channel implementations
-    ├── terminal_adapter.py  # Interactive REPL over stdin/stdout
+    ├── terminal_adapter.py  # Full-screen prompt_toolkit REPL
+    ├── prompt_adapter.py    # One-shot --prompt execution
+    ├── batch_adapter.py     # Line-oriented JSONL batch execution
     ├── discord_adapter.py   # discord.py bot
     ├── heartbeat_adapter.py # Periodic scheduled runs
-    └── matrix_adapter.py   # matrix-nio bot
+    └── matrix_adapter.py    # matrix-nio bot
+
+config/
+├── config.yaml              # Runtime configuration (checked-in example)
+└── HEARTBEAT.md             # Default heartbeat prompt
 
 tests/
 ├── test_agent.py            # Tools, config, graph structure tests
 ├── test_router.py           # Router and AgentService unit tests
 ├── test_adapters.py         # Adapter unit tests
-└── test_main.py             # build_router() and integration tests
+├── test_main.py             # build_router() and integration tests
+├── test_lsp_client.py       # LSP framing and client tests
+├── test_lsp_tools.py        # lsp_* tool tests
+├── test_memory_tools.py     # store_memory / read_memory tests
+├── test_logging_config.py   # JSON formatter tests
+├── test_logging_context.py  # RunContext / ThreadIdFilter tests
+└── config/                  # Config loader, schema, env-expand, secret tests
 
 examples/
 └── streaming.py             # Sync and async streaming demos
@@ -305,7 +347,7 @@ The `agent` node prepends a system prompt (with today's date) and calls the LLM 
 | `lsp_rename` | `tools/tools_lsp.py` | Return a JSON `WorkspaceEdit` for a rename without applying it |
 | `lsp_diagnostics` | `tools/tools_lsp.py` | Return diagnostics for a single source file |
 
-All filesystem and shell tools restrict access to paths inside the project working directory.
+All filesystem, shell, tree-sitter, and LSP tools restrict access to paths inside the project working directory.
 
 ### Generic LSP tools
 
@@ -314,15 +356,16 @@ The six `lsp_*` tools speak the Language Server Protocol over stdio to a backend
 **Prerequisites:**
 
 1. **clangd** must be installed and on `PATH` (or pointed to by `CLANGD_PATH`) for C/C++ files.
-2. **pyright-langserver** must be installed and on `PATH` (or pointed to by `PYRIGHT_LANGSERVER_PATH`) for Python files.
+2. **pyright-langserver** must be installed and on `PATH` (or pointed to by `PYRIGHT_LANGSERVER_PATH`) for Python files. It ships with the `pyright` dependency, so `uv sync` provides it.
 3. For best C/C++ results, provide a `compile_commands.json` in the project root. Without it, clangd falls back to best-effort parsing and results may be incomplete.
 
 **Behaviour:**
 
 - Clients are started lazily per backend and workspace root, then reused until the agent exits.
-- The generic LSP surface intentionally excludes completion, call hierarchy, and type hierarchy; the supported tool set is limited to definition, references, symbols, rename planning, and diagnostics.
+- The workspace root is the nearest ancestor containing a backend-specific marker (`pyrightconfig.json`, `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `.venv` for Python; `compile_commands.json`, `compile_flags.txt`, `.clangd` for C/C++), falling back to the nearest `.git` directory, then the current working directory.
+- The generic LSP surface intentionally excludes completion, call hierarchy, and type hierarchy; the supported tool set is limited to definition, references, symbols, rename planning, and diagnostics. Each tool checks the server's advertised capability and returns an error string when unsupported.
 - `lsp_workspace_symbols` requires a `path` anchor so the agent can choose the correct backend and project root.
-- Python requests prefer a project-local interpreter from `.venv`, `venv`, or `env`, then fall back to the running interpreter.
+- Python requests prefer a project-local interpreter from `.venv`, `venv`, or `env`, then fall back to the running interpreter. Pyright settings are injected via `workspace/didChangeConfiguration` unless the workspace already provides its own pyright configuration.
 - Input positions use **1-based line numbers** and **0-based character offsets** (matching `treesitter_get_symbols` and editor grep conventions). Outputs convert LSP's 0-based positions to 1-based.
 - All tool outputs are JSON strings capped at 8 000 characters. If a result exceeds this limit, a `{"truncated": true, "omitted_count": N}` sentinel is appended.
 - The same `_is_subpath` policy gating all filesystem tools also applies here — paths outside the project root are rejected.
@@ -347,6 +390,9 @@ bash start_sandboxed.sh
 # Run tests (no API keys needed)
 uv run pytest
 
+# Run tests with branch coverage
+uv run pytest --cov=src --cov-branch
+
 # Run only integration tests (requires live API keys)
 uv run pytest -m integration
 
@@ -354,7 +400,7 @@ uv run pytest -m integration
 uv run ruff check src tests
 
 # Type check
-uv run mypy src
+uv run pyright
 
 # Build wheel
 uv build
@@ -424,18 +470,3 @@ result = graph.invoke(
 )
 print(result["messages"][-1].content)
 ```
-## Lessons learned
-
-### Matrix
-
-Perform an initial login using username/password to obtain a stable `access_token` and `device_id`. Persist both values and reuse them on subsequent runs instead of re-authenticating.
-
-After the first successful login, initialize the client using the stored credentials:
-
-- `access_token`
-- `device_id`
-- persistent `store_path` (e.g. `./nio_store`)
-
-Do not call `login()` on every startup; reuse the saved session to ensure E2EE continuity.
-
-See `example/matrix.py` for a reference implementation.

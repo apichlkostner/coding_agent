@@ -10,6 +10,8 @@ This project is a coding agent with connection to messengers and terminal interf
 - Built with LangGraph and LangChain
 - Uses `uv` for dependency management
 - Tests can be run with `uv run pytest`
+- Test coverage: `uv run pytest --cov=src --cov-branch`
+- SCA: `uv run pyright` and `uv run ruff check src tests`
 - Main entry point is `src/agent/__main__.py`
 - See `README.md` for full setup and usage instructions
 
@@ -36,6 +38,13 @@ Documentation: ./docs
 
 - Professional writing
 - No emojies
+
+## Quality
+
+- If you add or change functionality, add or adapt the corresponding tests
+- Check test coverage in case of doubts
+- Do SCA checks, Pyright and Ruff
+- Do NOT disable checks but fix the findings
 
 ## Answering questions
 

@@ -14,7 +14,7 @@ discord_adapter:
   bot_token: ${DISCORD_BOT_TOKEN:-}
     
 heartbeat:
-    interval: 30
+    interval: 300
     prompt_file: config/HEARTBEAT.md
     output_adapter: discord
     output_channel: ${HEARTBEAT_OUTPUT_CHANNEL:-}
