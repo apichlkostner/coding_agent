@@ -158,7 +158,9 @@ class LanguageServerClient:
         initialize_params: Mapping[str, Any] | None = None,
         language_ids: Mapping[str, str] | None = None,
     ) -> None:
-        resolved_command = tuple(command or _DEFAULT_SERVER_COMMAND)
+        resolved_command = (
+            _DEFAULT_SERVER_COMMAND if command is None else tuple(command)
+        )
         if not resolved_command:
             raise ValueError("command must not be empty")
         self._command = resolved_command
@@ -348,18 +350,15 @@ class LanguageServerClient:
             except (TimeoutError, ProcessLookupError):
                 try:
                     self._process.kill()
-                    await self._process.wait()
-                except ProcessLookupError:
+                    # Bound the post-kill wait too: a process stuck in an
+                    # uninterruptible state would otherwise hang shutdown.
+                    await asyncio.wait_for(self._process.wait(), timeout=5.0)
+                except (TimeoutError, ProcessLookupError):
                     pass
         self._process = None
 
         # Reject any pending requests so callers don't hang forever.
-        for fut in self._pending.values():
-            if not fut.done():
-                fut.set_exception(
-                    ConnectionError(f"{self._server_name} client stopped")
-                )
-        self._pending.clear()
+        self._reject_pending(ConnectionError(f"{self._server_name} client stopped"))
 
     async def __aenter__(self) -> LanguageServerClient:
         await self.start()
@@ -391,6 +390,20 @@ class LanguageServerClient:
             logger.error("LSP protocol error: %s", exc)
         except Exception as exc:  # noqa: BLE001
             logger.exception("error in %s read loop: %s", self._server_name, exc)
+        finally:
+            # The server is gone (EOF, protocol error, or crash): no reply can
+            # ever arrive, so fail every pending request instead of letting
+            # callers block until their individual timeouts elapse.
+            self._reject_pending(
+                ConnectionError(f"{self._server_name} connection lost")
+            )
+
+    def _reject_pending(self, exc: BaseException) -> None:
+        """Fail all in-flight requests with *exc* and clear the pending map."""
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(exc)
+        self._pending.clear()
 
     async def _drain_stderr(self) -> None:
         """Log the server's stderr output line by line."""
@@ -510,10 +523,12 @@ class LanguageServerClient:
         *,
         timeout: float | None = None,
     ) -> Any:
-        if self._process is None or self._process.stdin is None:
-            raise ConnectionError("LanguageServerClient not started")
         if self._stopped:
             raise ConnectionError("LanguageServerClient stopped")
+        if self._reader_task is not None and self._reader_task.done():
+            raise ConnectionError(f"{self._server_name} connection lost")
+        if self._process is None or self._process.stdin is None:
+            raise ConnectionError("LanguageServerClient not started")
 
         req_id = self._next_id
         self._next_id += 1
@@ -528,11 +543,20 @@ class LanguageServerClient:
 
         async with self._request_lock:
             try:
+                if self._reader_task is not None and self._reader_task.done():
+                    raise ConnectionError(f"{self._server_name} connection lost")
                 await write_message(self._process.stdin, payload)
             except Exception:
                 self._pending.pop(req_id, None)
                 raise
-            return await asyncio.wait_for(fut, timeout=timeout or self._request_timeout)
+            try:
+                return await asyncio.wait_for(
+                    fut, timeout=timeout or self._request_timeout
+                )
+            except (TimeoutError, asyncio.CancelledError):
+                # Drop the dead future so _pending does not leak entries.
+                self._pending.pop(req_id, None)
+                raise
 
     async def _notify(self, method: str, params: Any) -> None:
         if self._process is None or self._process.stdin is None:

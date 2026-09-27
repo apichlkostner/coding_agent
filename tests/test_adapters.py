@@ -243,6 +243,32 @@ class TestTerminalAdapterSend:
         await adapter.send(msg)
         assert "[agent]" in capsys.readouterr().out
 
+    def test_append_output_updates_active_buffer_and_invalidates_app(self) -> None:
+        from prompt_toolkit.buffer import Buffer
+
+        adapter = TerminalAdapter()
+        adapter._output_buffer = Buffer()
+        adapter._output_buffer.insert_text("existing")
+        adapter._app = MagicMock()
+
+        adapter._append_output("next line")
+
+        assert adapter._output_buffer.text == "existingnext line\n"
+        assert adapter._output_buffer.cursor_position == len("existingnext line\n")
+        adapter._app.invalidate.assert_called_once()  # type: ignore[union-attr]
+
+
+class TestTerminalAdapterToolbar:
+    def test_toolbar_shows_idle_and_cycles_spinner_frames(self) -> None:
+        adapter = TerminalAdapter()
+
+        assert adapter._get_toolbar() == " Idle "
+
+        adapter._processing = True
+        for frame, spinner in enumerate("|/-\\|/"):
+            adapter._spinner_frame = frame
+            assert adapter._get_toolbar() == f" {spinner} Working... "
+
 
 class TestBatchAdapter:
     async def test_start_dispatches_non_empty_lines_in_order(
@@ -404,6 +430,24 @@ class TestTerminalAdapterProcessInput:
         assert adapter._status == "Idle"
         assert adapter._processing is False
 
+    async def test_resets_status_when_dispatch_raises(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        adapter = TerminalAdapter()
+
+        async def failing_dispatch(msg: InboundMessage) -> asyncio.Task[None]:
+            raise RuntimeError("dispatch failed")
+
+        router = MagicMock()
+        router.dispatch = failing_dispatch
+        adapter._router = router
+
+        await adapter._process_input("hello")
+
+        assert adapter._status == "Idle"
+        assert adapter._processing is False
+        assert "Error processing terminal input" in caplog.text
+
     async def test_awaits_dispatch_task(self) -> None:
         """The task must be fully awaited before _process_input returns."""
         adapter = TerminalAdapter()
@@ -492,23 +536,31 @@ class TestTerminalAdapterAcceptHandler:
         adapter._app.create_background_task.assert_not_called()  # type: ignore[union-attr]
         buff.reset.assert_called_once()
 
-    async def test_valid_input_creates_background_task(self) -> None:
+    async def test_valid_input_is_trimmed_echoed_and_dispatched(self) -> None:
+        from prompt_toolkit.buffer import Buffer
+
         adapter = self._make_adapter_with_mock_app()
         created: list[Any] = []
+        router, captured = _mock_router_with_dispatch()
+        adapter._router = router
+        adapter._output_buffer = Buffer()
 
         def fake_create_task(coro: Any) -> None:
             created.append(coro)
-            coro.close()
 
         adapter._app.create_background_task = fake_create_task  # type: ignore[union-attr]
-        buff = MagicMock()
-        buff.text = "hello world"
+        buff = Buffer()
+        buff.insert_text("  hello world  ")
 
         handler = adapter._make_accept_handler()
-        handler(buff)
+        assert handler(buff) is False
 
+        assert buff.text == ""
+        assert adapter._output_buffer.text == "You: hello world\n"
         assert len(created) == 1
-        buff.reset.assert_called_once()
+        await created[0]
+
+        assert [message.content for message in captured] == ["hello world"]
 
 
 class TestTerminalAdapterStart:
@@ -530,6 +582,49 @@ class TestTerminalAdapterStart:
         assert any(
             "interactive stdin/stdout" in record.message for record in caplog.records
         )
+
+    async def test_start_runs_interactive_app_and_cleans_up(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        adapter = TerminalAdapter()
+        router = MagicMock()
+        app = MagicMock()
+        app.run_async = AsyncMock()
+
+        with (
+            patch.object(adapter, "_interactive_stdio_available", return_value=True),
+            patch(
+                "agent.adapters.terminal_adapter.Application", return_value=app
+            ) as application,
+        ):
+            await adapter.start(router)
+
+        assert adapter._router is router
+        assert adapter._output_buffer is not None
+        assert adapter._output_buffer.text == (
+            "Agent ready  (type 'quit' or Ctrl-D to exit)\n"
+        )
+        app.run_async.assert_awaited_once()
+        assert adapter._app is None
+        assert capsys.readouterr().out.strip() == "Goodbye."
+
+        bindings = application.call_args.kwargs["key_bindings"].bindings
+        bound_keys = {binding.keys[0].value for binding in bindings}
+        assert {"c-c", "c-d"}.issubset(bound_keys)
+
+    async def test_start_cleans_up_app_when_interactive_run_fails(self) -> None:
+        adapter = TerminalAdapter()
+        app = MagicMock()
+        app.run_async = AsyncMock(side_effect=RuntimeError("terminal failed"))
+
+        with (
+            patch.object(adapter, "_interactive_stdio_available", return_value=True),
+            patch("agent.adapters.terminal_adapter.Application", return_value=app),
+            pytest.raises(RuntimeError, match="terminal failed"),
+        ):
+            await adapter.start(MagicMock())
+
+        assert adapter._app is None
 
 
 # ===========================================================================

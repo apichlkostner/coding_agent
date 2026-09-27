@@ -206,6 +206,8 @@ class MockLspServer:
         self.sent_to_client: list[dict[str, Any]] = []
         self.requests_by_method: dict[str, list[dict[str, Any]]] = {}
         self.canned: dict[str, Any] = {}
+        self.canned_errors: dict[str, dict[str, Any]] = {}
+        self.silent_methods: set[str] = set()
         self.delay_seconds: float = 0.0
         self.client_streams: _BidiClientPipe | None = None
         self._server_task: asyncio.Task[None] | None = None
@@ -213,6 +215,14 @@ class MockLspServer:
 
     def set_canned(self, method: str, result: Any) -> None:
         self.canned[method] = result
+
+    def set_canned_error(self, method: str, code: int, message: str) -> None:
+        """Make the server reply to *method* with a JSON-RPC error."""
+        self.canned_errors[method] = {"code": code, "message": message}
+
+    def silence(self, method: str) -> None:
+        """Record requests for *method* but never answer them."""
+        self.silent_methods.add(method)
 
     def set_delay(self, seconds: float) -> None:
         self.delay_seconds = seconds
@@ -259,6 +269,18 @@ class MockLspServer:
             self.requests_by_method.setdefault(method, []).append(msg)
             if self.delay_seconds:
                 await asyncio.sleep(self.delay_seconds)
+            if method in self.silent_methods:
+                return
+            if method in self.canned_errors:
+                await write_message(
+                    writer,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": self.canned_errors[method],
+                    },
+                )
+                return
             result = self.canned.get(method)
             response: dict[str, Any] = {
                 "jsonrpc": "2.0",
@@ -297,7 +319,13 @@ async def _start_wired(
     )
     mock.client_streams = pipe
     mock._server_task = asyncio.create_task(mock._serve())
-    await client._do_handshake()
+    try:
+        await client._do_handshake()
+    except Exception:
+        # Mirror LanguageServerClient.start(): a failed handshake must tear
+        # down the pipes and reader tasks rather than leave them dangling.
+        await client._kill()
+        raise
     # Yield so the mock server's _serve task processes any trailing
     # notifications (``initialized``) sent during the handshake.
     await asyncio.sleep(0)
@@ -993,6 +1021,620 @@ class TestLanguageServerMissing:
         with patch("agent.lsp.client.shutil.which", return_value=None):
             with pytest.raises(FileNotFoundError, match="language server not found"):
                 await client.start()
+
+
+class TestRequestErrorPaths:
+    """Error handling of the request/response machinery."""
+
+    async def test_json_rpc_error_response_raises_lsp_error(
+        self, workspace: Path
+    ) -> None:
+        from agent.lsp.client import LSPError
+
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            mock.set_canned_error("workspace/symbol", -32600, "bad request")
+            await _start_wired(client, mock, pipe)
+            with pytest.raises(LSPError) as exc_info:
+                await client.workspace_symbol("anything")
+            assert exc_info.value.code == -32600
+            assert exc_info.value.message == "bad request"
+            assert "LSP error -32600" in str(exc_info.value)
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_request_timeout_on_normal_request(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace, request_timeout=0.2)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            mock.silence("workspace/symbol")
+            await _start_wired(client, mock, pipe)
+            with pytest.raises(asyncio.TimeoutError):
+                await client.workspace_symbol("anything")
+            # The pending future must have been cleaned up.
+            assert not client._pending
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_request_before_start_raises_connection_error(
+        self, workspace: Path
+    ) -> None:
+        client, _mock, _pipe = _wire_client_with_mock(workspace)
+        with pytest.raises(ConnectionError, match="not started"):
+            await client.workspace_symbol("anything")
+
+    async def test_request_after_stop_raises_connection_error(
+        self, workspace: Path
+    ) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+        finally:
+            await client.stop()
+            pipe.close()
+        with pytest.raises(ConnectionError, match="stopped"):
+            await client.workspace_symbol("anything")
+
+    async def test_server_crash_rejects_pending_requests(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            mock.silence("workspace/symbol")
+            await _start_wired(client, mock, pipe)
+
+            task = asyncio.create_task(client.workspace_symbol("anything"))
+            await asyncio.sleep(0.05)
+            assert not task.done()
+
+            # Simulate a server crash: close the pipe (EOF on client stdout)
+            # and cancel the mock server task.
+            assert mock._server_task is not None
+            mock._server_task.cancel()
+            pipe.server_writer.close()
+
+            # The read loop must reject the in-flight request promptly
+            # instead of letting it block until its own timeout.
+            with pytest.raises(ConnectionError, match="connection lost"):
+                await asyncio.wait_for(task, timeout=2.0)
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_protocol_error_ends_read_loop_and_requests_fail(
+        self, workspace: Path
+    ) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace, request_timeout=0.3)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+
+            # Feed garbage that violates the framing rules directly into
+            # the client's stdout stream.
+            pipe.server_writer.write(b"Content-Length: 999999999999\r\n\r\n")
+            await asyncio.sleep(0.05)
+
+            # A new request must fail immediately once the read loop ends.
+            with pytest.raises(ConnectionError, match="connection lost"):
+                await client.workspace_symbol("anything")
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_unknown_response_id_is_dropped(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace, request_timeout=0.3)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            mock.silence("workspace/symbol")
+            await _start_wired(client, mock, pipe)
+
+            # Push a response with an id that matches no pending request.
+            await mock.send_notification("ignored", {})  # warm the pipeline
+            await write_message(
+                pipe.server_writer,
+                {"jsonrpc": "2.0", "id": 99999, "result": {"bogus": True}},
+            )
+            await asyncio.sleep(0.05)
+
+            # The stale response must not have answered anything, and the
+            # client must still be functional.
+            with pytest.raises(asyncio.TimeoutError):
+                await client.workspace_symbol("anything")
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_stop_with_wedged_server_still_terminates(
+        self, workspace: Path
+    ) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            mock.silence("shutdown")
+            await _start_wired(client, mock, pipe)
+            # Must not hang: shutdown request times out, kill fallback runs.
+            await asyncio.wait_for(client.stop(), timeout=10.0)
+            assert client._process is None
+        finally:
+            pipe.close()
+
+    async def test_handshake_failure_cleans_up(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace, startup_timeout=0.2)
+        try:
+            mock.set_delay(1.0)
+            with pytest.raises((asyncio.TimeoutError, OSError)):
+                await _start_wired(client, mock, pipe)
+            # _kill() must have run: no process, no pending futures, no tasks.
+            assert client._process is None
+            assert not client._pending
+            assert client._reader_task is None
+            assert client._stderr_task is None
+        finally:
+            pipe.close()
+
+    async def test_did_open_twice_sends_did_change(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            f = workspace / "a.cpp"
+            await client.did_open(str(f), "int x;\n")
+            await client.did_open(str(f), "int y;\n")
+            await asyncio.sleep(0)
+            opens = mock.requests_by_method.get("textDocument/didOpen", [])
+            changes = mock.requests_by_method.get("textDocument/didChange", [])
+            assert len(opens) == 1
+            assert len(changes) == 1
+            assert changes[0]["params"]["textDocument"]["version"] == 2
+            assert changes[0]["params"]["contentChanges"] == [{"text": "int y;\n"}]
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_await_diagnostics_times_out(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            f = workspace / "a.cpp"
+            f.write_text("int x;\n")
+            with pytest.raises(asyncio.TimeoutError):
+                await client.await_diagnostics(str(f), timeout=0.1)
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_log_ring_records_window_messages(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            await mock.send_notification(
+                "window/logMessage", {"type": 3, "message": "hello log"}
+            )
+            await asyncio.sleep(0.05)
+            ring = client.recent_log()
+            assert {"type": 3, "message": "hello log"} in ring
+        finally:
+            await client.stop()
+            pipe.close()
+
+
+class TestClientEdgeCases:
+    """Behaviours not exercised by the happy-path feature tests."""
+
+    async def test_start_twice_raises_runtime_error(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            with pytest.raises(RuntimeError, match="already started"):
+                await client.start()
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_start_rejects_missing_workspace_root(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does-not-exist"
+        client = LanguageServerClient(workspace_root=missing)
+        with pytest.raises(FileNotFoundError, match="workspace root does not exist"):
+            await client.start()
+
+    async def test_notify_before_start_raises_connection_error(
+        self, workspace: Path
+    ) -> None:
+        client, _mock, _pipe = _wire_client_with_mock(workspace)
+        with pytest.raises(ConnectionError, match="not started"):
+            await client.did_change_configuration({"a": 1})
+
+    async def test_request_write_failure_clears_pending(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+
+            # Make the next write blow up; the pending future must not leak.
+            def boom(_data: bytes) -> None:
+                raise OSError("broken pipe")
+
+            pipe.client_writer.write = boom  # type: ignore[method-assign]
+            with pytest.raises(OSError, match="broken pipe"):
+                await client.workspace_symbol("anything")
+            assert not client._pending
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_did_change_without_open_synthesises_did_open(
+        self, workspace: Path
+    ) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            f = workspace / "a.cpp"
+            await client.did_change(str(f), 5, "int z;\n")
+            await asyncio.sleep(0)
+            opens = mock.requests_by_method.get("textDocument/didOpen", [])
+            changes = mock.requests_by_method.get("textDocument/didChange", [])
+            assert len(opens) == 1
+            assert not changes
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_did_close_unopened_document_is_noop(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            await client.did_close(str(workspace / "never-opened.cpp"))
+            await asyncio.sleep(0)
+            assert "textDocument/didClose" not in mock.requests_by_method
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_ensure_open_is_idempotent(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            f = workspace / "a.cpp"
+            f.write_text("int x;\n")
+            await client.ensure_open(str(f))
+            await client.ensure_open(str(f))
+            await asyncio.sleep(0)
+            opens = mock.requests_by_method.get("textDocument/didOpen", [])
+            assert len(opens) == 1
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_sync_document_reports_whether_it_sent(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            f = workspace / "a.cpp"
+            f.write_text("int x;\n")
+            assert await client.sync_document(str(f)) is True  # didOpen
+            assert await client.sync_document(str(f)) is False  # unchanged
+            f.write_text("int y;\n")
+            assert await client.sync_document(str(f)) is True  # didChange
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_server_capabilities_empty_without_initialize(
+        self, workspace: Path
+    ) -> None:
+        client, _mock, _pipe = _wire_client_with_mock(workspace)
+        assert client.server_capabilities() == {}
+
+    async def test_server_capabilities_returns_capabilities_dict(
+        self, workspace: Path
+    ) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {"hoverProvider": True}})
+            await _start_wired(client, mock, pipe)
+            assert client.server_capabilities() == {"hoverProvider": True}
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_server_capabilities_empty_when_key_missing(
+        self, workspace: Path
+    ) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {})
+            await _start_wired(client, mock, pipe)
+            assert client.server_capabilities() == {}
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_unknown_notification_is_ignored(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            await mock.send_notification("$/progress", {"token": "x"})
+            await mock.send_notification("totally/unknown", {"a": 1})
+            await asyncio.sleep(0.05)
+            # Neither notification should land in the log ring.
+            assert client.recent_log() == []
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_stderr_output_is_drained(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            # The stderr reader was wired to an empty StreamReader in
+            # _start_wired; feeding EOF must let the drain task finish.
+            assert client._stderr_task is not None
+            client._process.stderr.feed_eof()  # type: ignore[union-attr]
+            await asyncio.sleep(0.05)
+            assert client._stderr_task.done()
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_kill_falls_back_to_kill_when_terminate_hangs(
+        self, workspace: Path
+    ) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            process = client._process
+            assert process is not None
+
+            # terminate() does nothing and the first wait() times out,
+            # forcing the kill() fallback path.
+            process.terminate = lambda: None  # type: ignore[method-assign]
+            calls = 0
+
+            async def wait() -> int:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise TimeoutError
+                return 0
+
+            process.wait = wait  # type: ignore[method-assign]
+            killed = False
+
+            def record_kill() -> None:
+                nonlocal killed
+                killed = True
+
+            process.kill = record_kill  # type: ignore[method-assign]
+
+            await asyncio.wait_for(client._kill(), timeout=10.0)
+            assert killed
+            assert calls == 2
+            assert client._process is None
+        finally:
+            pipe.close()
+
+    async def test_reply_ignored_when_process_gone(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            client._process = None
+            # Must not raise even though there is nowhere to write.
+            await client._reply(1, {"ok": True})
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_reply_write_failure_is_swallowed(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+
+            def boom(_data: bytes) -> None:
+                raise OSError("broken pipe")
+
+            pipe.client_writer.write = boom  # type: ignore[method-assign]
+            # _reply logs and returns instead of propagating the write error.
+            await client._reply(1, {"ok": True})
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_reject_pending_skips_already_done_futures(
+        self, workspace: Path
+    ) -> None:
+        client, _mock, _pipe = _wire_client_with_mock(workspace)
+        loop = asyncio.get_running_loop()
+        done: asyncio.Future[Any] = loop.create_future()
+        done.set_result("already")
+        pending: asyncio.Future[Any] = loop.create_future()
+        client._pending[1] = done
+        client._pending[2] = pending
+
+        client._reject_pending(ConnectionError("boom"))
+
+        assert done.result() == "already"  # untouched
+        assert isinstance(pending.exception(), ConnectionError)
+        assert not client._pending
+
+    async def test_drain_stderr_logs_non_empty_lines(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            assert client._process is not None
+            stderr = client._process.stderr
+            assert stderr is not None
+            stderr.feed_data(b"warning: something\n\n")
+            stderr.feed_eof()
+            await asyncio.sleep(0.05)
+            assert client._stderr_task is not None
+            assert client._stderr_task.done()
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_rename_returns_none_for_non_dict_result(
+        self, workspace: Path
+    ) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            mock.set_canned("textDocument/rename", ["not", "a", "dict"])
+            await _start_wired(client, mock, pipe)
+            f = workspace / "a.cpp"
+            f.write_text("int x;\n")
+            assert await client.rename(str(f), 0, 0, "y") is None
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_reset_default_client_when_unset_is_noop(self) -> None:
+        import agent.lsp.client as client_module
+
+        await client_module.reset_default_client()
+        assert client_module._default_client is None
+        # Calling again with no singleton must not raise.
+        await client_module.reset_default_client()
+        assert client_module._default_client is None
+
+    def test_empty_command_rejected(self, workspace: Path) -> None:
+        with pytest.raises(ValueError, match="command must not be empty"):
+            LanguageServerClient(command=(), workspace_root=workspace)
+
+    async def test_start_cleans_up_when_handshake_fails(self, workspace: Path) -> None:
+        client = LanguageServerClient(
+            command=("fake-server",), workspace_root=workspace, startup_timeout=0.2
+        )
+        pipe = _BidiClientPipe()
+        mock = MockLspServer()
+        mock.client_streams = pipe
+        mock.set_delay(1.0)  # never answers initialize in time
+
+        async def fake_exec(*_args: Any, **_kwargs: Any) -> Any:
+            class _Proc:
+                stdin = pipe.client_writer
+                stdout = pipe.client_reader
+                stderr = asyncio.StreamReader()
+                returncode: int | None = None
+
+                async def wait(self) -> int:
+                    return 0
+
+                def terminate(self) -> None:
+                    self.returncode = -15
+
+                def kill(self) -> None:
+                    self.returncode = -9
+
+            return _Proc()
+
+        try:
+            with (
+                patch("agent.lsp.client.shutil.which", return_value="/fake/server"),
+                patch(
+                    "agent.lsp.client.asyncio.create_subprocess_exec",
+                    side_effect=fake_exec,
+                ),
+            ):
+                mock._server_task = asyncio.create_task(mock._serve())
+                with pytest.raises(asyncio.TimeoutError):
+                    await client.start()
+            # start()'s except branch must have run _kill().
+            assert client._process is None
+            assert client._reader_task is None
+            assert client._stderr_task is None
+            assert not client._pending
+        finally:
+            pipe.close()
+
+    async def test_protocol_error_ends_read_loop(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            # Oversized Content-Length violates the framing rules and makes
+            # read_message raise LSPProtocolError inside the read loop.
+            pipe.server_writer.write(b"Content-Length: 999999999999\r\n\r\n")
+            await asyncio.sleep(0.05)
+            assert client._reader_task is not None
+            assert client._reader_task.done()
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_work_done_progress_create_acked(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            await mock.send_request("window/workDoneProgress/create", {"token": "t"})
+            await asyncio.sleep(0.05)
+            responses = [
+                m
+                for m in mock.sent_to_client
+                if m.get("id") is not None and "method" not in m
+            ]
+            assert len(responses) == 1
+            assert responses[0]["result"] is None
+        finally:
+            await client.stop()
+            pipe.close()
+
+    async def test_semantic_tokens_refresh_acked(self, workspace: Path) -> None:
+        client, mock, pipe = _wire_client_with_mock(workspace)
+        try:
+            mock.set_canned("initialize", {"capabilities": {}})
+            await _start_wired(client, mock, pipe)
+            await mock.send_request("workspace/semanticTokens/refresh", None)
+            await asyncio.sleep(0.05)
+            responses = [
+                m
+                for m in mock.sent_to_client
+                if m.get("id") is not None and "method" not in m
+            ]
+            assert len(responses) == 1
+            assert responses[0]["result"] is None
+        finally:
+            await client.stop()
+            pipe.close()
+
+
+class TestDefaultClientSingleton:
+    async def test_get_and_reset_default_client(self, workspace: Path) -> None:
+        import agent.lsp.client as client_module
+
+        await client_module.reset_default_client()
+        try:
+            with (
+                patch("agent.lsp.client.shutil.which", return_value="/fake/clangd"),
+                patch("agent.lsp.client.asyncio.create_subprocess_exec") as fake_exec,
+            ):
+                # Make start() fail so we can observe the singleton state
+                # without spawning a real server.
+                fake_exec.side_effect = OSError("no exec in test")
+                with pytest.raises(OSError):
+                    await client_module.get_default_client()
+                # A failed start must not leave a half-initialised singleton.
+                assert client_module._default_client is not None
+                await client_module.reset_default_client()
+                assert client_module._default_client is None
+        finally:
+            await client_module.reset_default_client()
 
 
 # ---------------------------------------------------------------------------
