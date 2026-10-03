@@ -82,6 +82,7 @@ class TestJsonFormatter:
             "event",
             "message",
             "logger",
+            "usage_metadata",
         }
         assert payload["level"] == "INFO"
         assert payload["message"] == "hello"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 
+from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
@@ -53,7 +54,6 @@ class AgentService:
         The ``adapter_id`` and ``reply_channel_id`` on every yielded message
         are copied from *message* so the router knows where to send it.
         """
-        config: RunnableConfig = {"configurable": {"thread_id": message.thread_id}}
 
         def _make(content: str, msg_type: str, node_name: str = "") -> OutboundMessage:
             meta = {**message.metadata, "msg_type": msg_type, "node_name": node_name}
@@ -63,6 +63,13 @@ class AgentService:
                 content=content,
                 metadata=meta,
             )
+
+        usage_metadata_cb = UsageMetadataCallbackHandler()
+
+        config: RunnableConfig = {
+            "configurable": {"thread_id": message.thread_id},
+            "callbacks": [usage_metadata_cb],
+        }
 
         logger.info(
             "%s",
@@ -123,7 +130,10 @@ class AgentService:
                     logger.info(
                         "%s",
                         last_msg.content[:100],
-                        extra={"event": "agent-response"},
+                        extra={
+                            "event": "agent-response",
+                            "usage_metadata": usage_metadata_cb.usage_metadata,
+                        },
                     )
                     yield _make(last_msg.content, "response", node_name)
 
