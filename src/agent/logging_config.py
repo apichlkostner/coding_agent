@@ -16,6 +16,7 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
             "logger": record.name,
             "usage_metadata": getattr(record, "usage_metadata", None),
+            "runtime": getattr(record, "runtime", None),
         }
 
         event = getattr(record, "event", None)

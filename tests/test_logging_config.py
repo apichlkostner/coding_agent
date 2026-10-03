@@ -83,10 +83,21 @@ class TestJsonFormatter:
             "message",
             "logger",
             "usage_metadata",
+            "runtime",
         }
         assert payload["level"] == "INFO"
         assert payload["message"] == "hello"
         assert payload["logger"] == "test"
+
+    def test_runtime_defaults_to_none_when_absent(self) -> None:
+        payload = json.loads(JsonFormatter().format(_record()))
+
+        assert payload["runtime"] is None
+
+    def test_runtime_attr_passed_through(self) -> None:
+        payload = json.loads(JsonFormatter().format(_record(runtime=1.23)))
+
+        assert payload["runtime"] == 1.23
 
     def test_defaults_when_context_attrs_absent(self) -> None:
         payload = json.loads(JsonFormatter().format(_record()))

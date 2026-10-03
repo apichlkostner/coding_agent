@@ -7,6 +7,7 @@ handling) lives here.  Adapters never touch the graph directly.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncGenerator
 
 from langchain_core.callbacks import UsageMetadataCallbackHandler
@@ -71,6 +72,8 @@ class AgentService:
             "callbacks": [usage_metadata_cb],
         }
 
+        start_time = time.perf_counter()
+
         logger.info(
             "%s",
             message.content,
@@ -127,12 +130,14 @@ class AgentService:
 
                 else:
                     # Final agent response
+                    runtime = round(time.perf_counter() - start_time, 2)
                     logger.info(
                         "%s",
                         last_msg.content[:100],
                         extra={
                             "event": "agent-response",
                             "usage_metadata": usage_metadata_cb.usage_metadata,
+                            "runtime": runtime,
                         },
                     )
                     yield _make(last_msg.content, "response", node_name)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -406,6 +406,79 @@ class TestAgentService:
         results = [msg async for msg in service.run(inbound)]
 
         assert results[0].metadata["msg_type"] == "response"
+
+    async def test_response_log_carries_rounded_runtime(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The agent-response log record carries a ``runtime`` in seconds,
+        rounded to at most two decimal places."""
+        graph = _make_graph({"agent": {"messages": [AIMessage(content="Hi")]}})
+        service = AgentService(graph)
+
+        with caplog.at_level(logging.INFO, logger="agent.router.agent_service"):
+            _ = [msg async for msg in service.run(_inbound())]
+
+        record = next(
+            r for r in caplog.records if getattr(r, "event", None) == "agent-response"
+        )
+        runtime = cast(Any, record).runtime
+        assert isinstance(runtime, float)
+        assert runtime >= 0.0
+        # Rounding to two decimals means the value equals its own 2-dp rounding.
+        assert runtime == round(runtime, 2)
+
+    async def test_runtime_measured_from_stream_start(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``runtime`` is the elapsed time between the start of the stream and
+        the final response, using ``time.perf_counter``."""
+        import agent.router.agent_service as agent_service
+
+        ticks = iter([100.0, 103.456])
+        monkeypatch.setattr(agent_service.time, "perf_counter", lambda: next(ticks))
+
+        graph = _make_graph({"agent": {"messages": [AIMessage(content="Hi")]}})
+        service = AgentService(graph)
+
+        with caplog.at_level(logging.INFO, logger="agent.router.agent_service"):
+            _ = [msg async for msg in service.run(_inbound())]
+
+        record = next(
+            r for r in caplog.records if getattr(r, "event", None) == "agent-response"
+        )
+        assert cast(Any, record).runtime == 3.46
+
+    async def test_tool_events_do_not_carry_runtime(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Only the final agent-response event carries ``runtime``; tool events
+        do not."""
+        ai_with_tools = AIMessage(content="")
+        ai_with_tools.tool_calls = [
+            {"name": "calculate", "args": {"expr": "1+1"}, "id": "tc1"}
+        ]  # type: ignore[assignment]
+
+        graph = _make_graph(
+            {"agent": {"messages": [ai_with_tools]}},
+            {
+                "tools": {
+                    "messages": [
+                        ToolMessage(content="2", tool_call_id="tc1", name="calculate")
+                    ]
+                }
+            },
+            {"agent": {"messages": [AIMessage(content="Done.")]}},
+        )
+        service = AgentService(graph, verbose=True)
+
+        with caplog.at_level(logging.INFO, logger="agent.router.agent_service"):
+            _ = [msg async for msg in service.run(_inbound())]
+
+        tool_records = [
+            r for r in caplog.records if isinstance(getattr(r, "event", None), dict)
+        ]
+        assert tool_records
+        assert all(not hasattr(r, "runtime") for r in tool_records)
 
 
 # ---------------------------------------------------------------------------
