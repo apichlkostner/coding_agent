@@ -28,7 +28,9 @@ def _load_memory() -> dict[str, str]:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to load agent memory: %s", exc)
+            logger.warning(
+                "Failed to load agent memory: %s: %s", type(exc).__name__, exc
+            )
     return {}
 
 

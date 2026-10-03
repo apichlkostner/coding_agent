@@ -110,9 +110,10 @@ class DiscordAdapter(BaseAdapter):
             try:
                 channel = await self._client.fetch_channel(channel_id)
             except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "DiscordAdapter: could not get channel %s: %s",
+                logger.exception(
+                    "DiscordAdapter: could not get channel %s: %s: %s",
                     message.reply_channel_id,
+                    type(exc).__name__,
                     exc,
                 )
                 return

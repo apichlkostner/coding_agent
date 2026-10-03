@@ -133,8 +133,11 @@ class MatrixAdapter(BaseAdapter):
             except Exception as exc:
                 next_batch = self._client.next_batch or next_batch
                 backoff = min(2**attempt + random.uniform(0, 1), 60.0)
-                logger.error(
-                    "MatrixAdapter sync error (retry in %.1fs): %s", backoff, exc
+                logger.exception(
+                    "MatrixAdapter sync error (retry in %.1fs): %s: %s",
+                    backoff,
+                    type(exc).__name__,
+                    exc,
                 )
                 await asyncio.sleep(backoff)
                 attempt += 1

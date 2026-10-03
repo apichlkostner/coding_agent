@@ -387,7 +387,7 @@ class LanguageServerClient:
         except asyncio.CancelledError:
             raise
         except LSPProtocolError as exc:
-            logger.error("LSP protocol error: %s", exc)
+            logger.exception("LSP protocol error: %s: %s", type(exc).__name__, exc)
         except Exception as exc:  # noqa: BLE001
             logger.exception("error in %s read loop: %s", self._server_name, exc)
         finally:

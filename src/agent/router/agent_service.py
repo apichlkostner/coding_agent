@@ -138,5 +138,5 @@ class AgentService:
                     yield _make(last_msg.content, "response", node_name)
 
         except Exception as exc:  # noqa: BLE001
-            logger.error("AgentService error: %s", exc)
-            yield _make(f"{exc!s:.200}", "error")
+            logger.exception("AgentService error: %s: %s", type(exc).__name__, exc)
+            yield _make(f"{type(exc).__name__}: {exc!s:.200}", "error")

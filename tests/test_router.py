@@ -7,6 +7,7 @@ replaced by a lightweight mock that yields pre-canned ``astream`` steps.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import MagicMock
@@ -256,6 +257,49 @@ class TestAgentService:
         assert len(results) == 1
         assert results[0].msg_type == "error"
         assert "graph exploded" in results[0].content
+
+    async def test_error_message_includes_exception_type(self) -> None:
+        """The error content must name the exception type, not just its text.
+
+        A bare ``KeyError`` stringifies to the missing key alone, so without
+        the type the log is undiagnosable.
+        """
+
+        async def _boom(*args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
+            raise KeyError("missing_key")
+            yield  # make it a generator
+
+        graph = MagicMock()
+        graph.astream = _boom
+        service = AgentService(graph)
+
+        results = [msg async for msg in service.run(_inbound())]
+
+        assert results[0].msg_type == "error"
+        assert "KeyError" in results[0].content
+        assert "missing_key" in results[0].content
+
+    async def test_error_log_carries_traceback(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The error log record must carry ``exc_info`` so the formatter can
+        emit the full traceback (including the exception type)."""
+
+        async def _boom(*args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
+            raise KeyError("missing_key")
+            yield  # make it a generator
+
+        graph = MagicMock()
+        graph.astream = _boom
+        service = AgentService(graph)
+
+        with caplog.at_level(logging.ERROR, logger="agent.router.agent_service"):
+            _ = [msg async for msg in service.run(_inbound())]
+
+        record = next(r for r in caplog.records if r.levelno == logging.ERROR)
+        assert record.exc_info is not None
+        assert record.exc_info[0] is KeyError
+        assert "KeyError" in record.getMessage()
 
     async def test_skips_steps_without_messages_key(self) -> None:
         """Nodes that don't produce a 'messages' key (e.g. __interrupt__) are

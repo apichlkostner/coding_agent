@@ -151,7 +151,9 @@ class MessageRouter:
             except Exception as exc:  # noqa: BLE001
                 # AgentService already yields error messages, but guard
                 # against anything that escapes the generator.
-                logger.error("Unhandled error in _process: %s", exc)
+                logger.exception(
+                    "Unhandled error in _process: %s: %s", type(exc).__name__, exc
+                )
             finally:
                 run_context_var.reset(token)
 
