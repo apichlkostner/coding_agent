@@ -23,7 +23,7 @@ dependencies = [
     "tree-sitter-go>=0.25.0",
     "tree-sitter-c>=0.24.2",
     "tree-sitter-cpp>=0.23.4",
-    "pyright>=1.1.410",
+    "pyright>=1.1.414",
     "pytest-cov>=7.1.0",
 ]
 
@@ -55,6 +55,10 @@ packages = ["src/agent"]
 src = ["src"]
 line-length = 88
 target-version = "py312"
+extend-exclude = [
+    "tests/testfolder",  # test data, intentionally malformed
+    "tests/testfiles",   # test data
+]
 
 [tool.ruff.lint]
 select = [

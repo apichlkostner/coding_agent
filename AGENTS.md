@@ -1,50 +1,76 @@
 # Agent Guidelines
 
 You are a professional software developer supporting another professional software developer.
-You answers are short and on point, no fill words and sentences, no emojies. Professional tone.
+
+## Communication style
+
+- Keep answers short and to the point.
+- Omit filler words and filler sentences.
+- Do not use emojis.
+- Maintain a professional tone.
 
 ## Project context
 
-This project is a coding agent with connection to messengers and terminal interface.
+A LangGraph ReAct coding agent with messenger and terminal adapters.
 
 - Built with LangGraph and LangChain
-- Uses `uv` for dependency management
-- Tests can be run with `uv run pytest`
-- Test coverage: `uv run pytest --cov=src --cov-branch`
-- SCA: `uv run pyright` and `uv run ruff check src tests`
-- Main entry point is `src/agent/__main__.py`
-- See `README.md` for full setup and usage instructions
+- Python 3.12, `uv` for dependency management
+- Main entry point: `src/agent/__main__.py` (`uv run agent`)
+- See `README.md` for setup and usage
 
-## Project structure
+## Architecture
 
-Sources: ./src/agent/
-Adapter for messenger or terminal: ./src/agent/adapters/
-Message router: ./src/agent/router/
-Agent tools: ./src/agent/tools/
+- `graph.py` — builds the `StateGraph` (ReAct loop)
+- `nodes.py` — graph nodes (model call, tool execution)
+- `state.py` — `AgentState` TypedDict passed between nodes
+- `router/` — `MessageRouter` + `AgentService`; routes inbound/outbound messages
+- `adapters/` — one adapter per channel (terminal, Discord, Matrix, heartbeat, batch, prompt)
+- `tools/` — agent tools, grouped by domain (filesystem, lsp, treesitter, memory, …)
+- `config/` — YAML loading, `${VAR}` expansion, secret validation
+- `lsp/` — generic LSP client (clangd, pyright-langserver)
 
-Tests: ./tests
-Examples: ./examples
-Documentation: ./docs
+Adapters implement `BaseAdapter` and register with the router. Adapter registration is config-driven.
 
+## Commands
+
+- Run agent: `uv run agent`
+- One-shot: `uv run agent --prompt "..."`
+- Batch: `uv run agent --batch-input prompts.txt --batch-output results.jsonl`
+- Tests: `uv run pytest`
+- Coverage: `uv run pytest --cov=src --cov-branch`
+- Lint: `uv run ruff check src tests`
+- Format check: `uv run ruff format --check src tests`
+- Types: `uv run pyright`
+- Full gate: `./scripts/check.sh` (ruff check + format check + pyright + pytest)
 
 ## Python
 
-- Modern Python 3.12
-- Prefer idiomatic python
-- Generate industry standard code
-- Explicit error handling
+- Modern Python 3.12; idiomatic, industry-standard code
+- Explicit error handling; no bare `except`
+- Full type annotations; the codebase is checked with Pyright and strict mypy
+- Add dependencies with `uv add`, not by hand-editing `pyproject.toml`
 
-## Documentation and plans
+## Testing
 
-- Professional writing
-- No emojies
+- `asyncio_mode = "auto"` — async tests need no `@pytest.mark.asyncio`
+- Mark tests needing real services/binaries with `@pytest.mark.integration`
+- `tests/fixtures/` and `tests/testfolder/` contain intentionally broken/malformed data — never "fix" them
+- Add or adapt tests for every behavior change
+
+## Configuration
+
+- `config/config.yaml` is always loaded; `${VAR}` and `${VAR:-default}` expand from the environment
+- Secret values must use environment substitutions; non-empty secret defaults are rejected
+- Adapters are enabled by non-empty config sections, not a separate list
 
 ## Quality
 
-- If you add or change functionality, add or adapt the corresponding tests
-- Check test coverage in case of doubts
-- Do SCA checks, Pyright and Ruff
-- Do NOT disable checks but fix the findings
+- Do NOT disable checks (no `# noqa`, `# type: ignore`, or config exclusions) — fix the findings
+- Before finishing, run `./scripts/check.sh` and ensure it passes
+
+## Documentation and plans
+
+- Professional writing, no emojis
 
 ## Answering questions
 
