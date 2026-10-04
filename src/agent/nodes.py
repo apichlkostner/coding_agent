@@ -81,7 +81,7 @@ def get_llm_from_config(config: Config) -> BaseChatModel:
 @cache
 def _get_llm_with_tools() -> Any:
     """Return the LLM with tools bound (cached singleton)."""
-    config = load_config("config/config.yaml")
+    config = load_config()
     llm = get_llm_from_config(config)
     tools = get_tools()
     return llm.bind_tools(tools)

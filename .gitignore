@@ -49,12 +49,20 @@ langgraph.json
 # Agent memory persistence
 .agent_memory.json
 
+# Benchmark harness: task repos, solutions, and results stay local
+benchmark/results/
+benchmark/.env
+benchmark/tasks/*/repo/.git/
+benchmark/tasks/*/repo/.venv/
+benchmark/tasks/*/repo/__pycache__/
+benchmark/tasks/*/repo/.pytest_cache/
+benchmark/tasks/*/repo/.ruff_cache/
+
 # local copies of docs
 docs/index.md
 docs/opencode
 docs/langgraph
 nio_store
-.test_project
-agent.log
+logs/
 element-keys.txt
 .python-version

@@ -171,7 +171,7 @@ async def _run(argv: list[str] | None = None) -> None:
         if args.working_dir:
             os.chdir(Path(args.working_dir).expanduser().resolve())
 
-        config = load_config("config/config.yaml")
+        config = load_config()
 
         if args.prompt:
             router = build_one_shot_router(prompt=args.prompt)

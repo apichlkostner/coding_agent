@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent.config.config import ConfigError, load_config
+from agent.config.config import ConfigError, load_config, resolve_config_path
 from agent.config.schema import Config
 
 
@@ -200,3 +200,58 @@ class TestLoadConfig:
         assert config.discord_adapter.bot_token == ""
         assert config.matrix_adapter.homeserver_url == ""
         assert config.heartbeat.interval == 600
+
+
+class TestResolveConfigPath:
+    """Tests for :func:`agent.config.config.resolve_config_path`."""
+
+    def test_explicit_path_wins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AGENT_CONFIG", "/env/config.yaml")
+        explicit = tmp_path / "explicit.yaml"
+        assert resolve_config_path(str(explicit)) == explicit
+
+    def test_env_var_used_when_no_explicit_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_path = tmp_path / "from_env.yaml"
+        monkeypatch.setenv("AGENT_CONFIG", str(env_path))
+        assert resolve_config_path() == env_path
+
+    def test_cwd_config_preferred_over_repo_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AGENT_CONFIG", raising=False)
+        cwd_config = tmp_path / "config" / "config.yaml"
+        cwd_config.parent.mkdir(parents=True)
+        cwd_config.write_text("model_provider: {}\n")
+        monkeypatch.chdir(tmp_path)
+        assert resolve_config_path() == cwd_config
+
+    def test_falls_back_to_agent_repo_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AGENT_CONFIG", raising=False)
+        # A directory with no config/config.yaml forces the repo-root fallback.
+        monkeypatch.chdir(tmp_path)
+        resolved = resolve_config_path()
+        assert resolved.name == "config.yaml"
+        assert resolved.parent.name == "config"
+        assert resolved.exists()
+
+    def test_load_config_without_argument_uses_resolver(
+        self,
+        tmp_path: Path,
+        valid_config_dict: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-1234abcd")
+        monkeypatch.setenv("DISCORD_BOT_TOKEN", "98761234")
+        monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "56784321")
+        path = write_config(tmp_path, valid_config_dict)
+        monkeypatch.setenv("AGENT_CONFIG", path)
+
+        config = load_config()
+
+        assert config.model.name == "gpt-5.6-luna"

@@ -1,6 +1,7 @@
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 
 from agent.logging_context import ThreadIdFilter
 
@@ -43,8 +44,10 @@ def configure_logging() -> None:
     formatter = JsonFormatter()
 
     # rotating filename per day
+    log_path = Path("logs/agent.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     file_handler = TimedRotatingFileHandler(
-        "logs/agent.log",
+        log_path,
         when="midnight",
         interval=1,
         backupCount=14,

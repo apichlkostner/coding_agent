@@ -21,6 +21,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     clangd \
+    clang-tidy \
+    clang-format \
     firejail
 
 RUN su vscode -c " \
