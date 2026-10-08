@@ -115,11 +115,16 @@ fi
 # Run the agent with the disposable repo as CWD and the copied source on the
 # import path. PYTHONPATH points at the copy, so `import agent` resolves there.
 # AGENT_CONFIG points at the real config, since the copied source has no config.
+#
+# BENCH_PYTHON and BENCH_CONFIG are overridable so the harness can run inside a
+# container that has no repo .venv (see run_task_remote.sh).
+BENCH_PYTHON="${BENCH_PYTHON:-$REPO_ROOT/.venv/bin/python}"
+BENCH_CONFIG="${BENCH_CONFIG:-$REPO_ROOT/config/config.yaml}"
 (
   cd "$REPO_COPY"
   PYTHONPATH="$AGENT_SRC" \
-    AGENT_CONFIG="$REPO_ROOT/config/config.yaml" \
-    "$REPO_ROOT/.venv/bin/python" -m agent --prompt "$PROMPT"
+    AGENT_CONFIG="$BENCH_CONFIG" \
+    "$BENCH_PYTHON" -m agent --prompt "$PROMPT"
 ) >"$AGENT_LOG" 2>&1 || true
 
 END_TS="$(date +%s)"

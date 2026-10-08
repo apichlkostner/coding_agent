@@ -4,7 +4,7 @@ model_provider:
   name: litellm
   api: openai
   api_key: ${API_KEY_LITELLM}
-  endpoint: http://litellm:4000/v1
+  endpoint: ${LITELLM_BASE_URL:-http://litellm:4000/v1}
 
 model:
     name: gpt-6-luna

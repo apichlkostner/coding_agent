@@ -52,6 +52,8 @@ langgraph.json
 # Benchmark harness: task repos, solutions, and results stay local
 benchmark/results/
 benchmark/.env
+benchmark/docker/id_ed25519
+benchmark/docker/id_ed25519.pub
 benchmark/tasks/*/repo/.git/
 benchmark/tasks/*/repo/.venv/
 benchmark/tasks/*/repo/__pycache__/

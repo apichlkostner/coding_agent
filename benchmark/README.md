@@ -24,17 +24,35 @@ after the agent has stopped.
 
 ## Isolation
 
-The **devcontainer is the isolation boundary**: the agent runs inside it, so the
-host is protected by the container. Within the devcontainer, `run_task.sh`:
+Three possible grades of isolation are supported:
 
-- copies `repo/` to a fresh temporary directory (the agent's CWD),
-- runs the agent from a **copy** of the agent source, so the real source tree
-  cannot be modified by the agent,
-- passes secrets via the environment, preferring a dedicated `benchmark/.env`
-  (a scoped key) over the main repo `.env`.
+- Just run everything on the host without isolation
+    - No protection against agentic misbehavior
+- Use the devcontainer for isolation
+    - Host is protected against the agents behavior
+    - Devcontainer and task solution are not protected
+- Use an extra container to run the benchmark
+    - Host and devcontainer are protected against the agents behavior
+    - Solutions are protected
+    - Git history is protected
 
-Using firejail or containers are not possible inside the devcontainer without
-enabling unsecure settings.
+### No extra isolation
+
+To run it without extra container, use `run_task.sh` on the host or in the devcontainer.
+
+### Stronger isolation: run in a dedicated container
+
+For stronger isolation, run tasks in a dedicated container instead of the
+devcontainer. Docker runs on the **host**; the devcontainer drives the container
+over SSH. See [`docker/README.md`](docker/README.md).
+
+```bash
+# On the host: build and start the container.
+./benchmark/docker/run_container.sh
+
+# In the devcontainer: run a task inside the container.
+./benchmark/run_task_remote.sh python-fix-bug
+```
 
 ### Threat model
 
@@ -44,6 +62,9 @@ enabling unsecure settings.
 | Agent damages the agent source | agent runs from a copied source tree |
 | Agent damages the task repo | disposable copy per run |
 | Agent reads secrets | scoped `benchmark/.env` (see below) |
+
+When running via `run_task_remote.sh`, the container replaces the devcontainer
+as the boundary, additionally protecting the devcontainer itself.
 
 The agent's `bash` tool is unrestricted, so it can read any file the devcontainer
 user can read — including the repo `.env` if you use it. Use a dedicated
