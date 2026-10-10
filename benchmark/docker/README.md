@@ -55,3 +55,7 @@ Run these inside the devcontainer.
 ```
 
 Results are pulled back into `benchmark/results/`.
+
+`run_task_remote.sh` runs the task and then grades it in two separate SSH
+invocations. The grader is copied into the container only after the agent has
+exited, so an agent that searches the home directory cannot find it.

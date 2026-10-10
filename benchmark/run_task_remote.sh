@@ -92,12 +92,14 @@ ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "rm -rf '$REMOTE_ROOT' && mkdir -p '$REMOTE_B
 # Copy the harness scripts and the task directory.
 echo "==> Copying harness and task"
 scp "${SCP_OPTS[@]}" \
+  "$BENCH_DIR/init.sh" \
+  "$BENCH_DIR/run_grader.sh" \
   "$BENCH_DIR/run_task.sh" \
   "$BENCH_DIR/run_all.sh" \
   "$SSH_TARGET:$REMOTE_BENCH/"
-ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "chmod +x '$REMOTE_BENCH/run_task.sh' '$REMOTE_BENCH/run_all.sh'"
+ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "chmod +x '$REMOTE_BENCH/run_grader.sh' '$REMOTE_BENCH/run_task.sh' '$REMOTE_BENCH/run_all.sh'"
 
-rsync -az -e "$RSYNC_SSH" "$TASK_DIR" --exclude "*/solution" "$SSH_TARGET:$REMOTE_BENCH/tasks/"
+rsync -az -e "$RSYNC_SSH" "$TASK_DIR" --exclude "*/solution" --exclude "grader" "$SSH_TARGET:$REMOTE_BENCH/tasks/"
 
 # Copy the agent source, config, and project metadata. The container has no
 # checkout of the repo, so everything the agent needs is shipped explicitly.
@@ -139,6 +141,17 @@ ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
    BENCH_CONFIG='$REMOTE_ROOT/config/config.yaml' \
    '$REMOTE_BENCH/run_task.sh' '$TASK_ID' $REMOTE_KEEP" || RUN_EXIT=$?
 
+echo "==> Task run finished, starting grading"
+
+# Inject the grader only now, after the agent has stopped, so an agent that
+# searches the home directory cannot find it.
+rsync -az -e "$RSYNC_SSH" "$TASK_DIR/grader" "$SSH_TARGET:$REMOTE_BENCH/tasks/$TASK_ID/"
+
+GRADE_EXIT=0
+ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+  "cd '$REMOTE_ROOT' && \
+   '$REMOTE_BENCH/run_grader.sh' '$TASK_ID' $REMOTE_KEEP" || GRADE_EXIT=$?
+
 # ---------------------------------------------------------------------------
 # Pull results back.
 # ---------------------------------------------------------------------------
@@ -149,5 +162,8 @@ rsync -az -e "$RSYNC_SSH" \
 
 echo "==> Done. Results in $RESULTS_DIR"
 
-# Propagate the task's pass/fail as the script's exit code.
-exit "$RUN_EXIT"
+# Propagate failure from either phase as the script's exit code.
+if [[ "$RUN_EXIT" -ne 0 ]]; then
+  exit "$RUN_EXIT"
+fi
+exit "$GRADE_EXIT"

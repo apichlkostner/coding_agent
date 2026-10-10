@@ -22,6 +22,19 @@ are siblings of `repo/`, so they are outside the agent's filesystem sandbox and
 never appear in its git history. The grader is copied into the working copy only
 after the agent has stopped.
 
+## Run and grade are separate steps
+
+The harness is split into two scripts that share setup via `init.sh`:
+
+- `run_task.sh` — prepares a disposable repo copy and runs the agent. It does
+  **not** grade.
+- `run_grader.sh` — injects the grader into the repo copy and grades it. It
+  requires a prior `run_task.sh` run for the same task.
+
+They communicate through a per-task state file (`/tmp/BENCHMARK_ENV.<task-id>`)
+that records the working directory and the run duration. `run_grader.sh` removes
+this file when it finishes.
+
 ## Isolation
 
 Three possible grades of isolation are supported:
@@ -38,7 +51,9 @@ Three possible grades of isolation are supported:
 
 ### No extra isolation
 
-To run it without extra container, use `run_task.sh` on the host or in the devcontainer.
+To run it without an extra container, use `run_task.sh` followed by
+`run_grader.sh` on the host or in the devcontainer. `run_all.sh` runs both steps
+for every task.
 
 ### Stronger isolation: run in a dedicated container
 
@@ -73,7 +88,8 @@ radius. The harness prefers `benchmark/.env` when it exists.
 
 ## Grading
 
-A task passes only if `grader/check.sh` exits 0. Grading is behavior-based:
+Grading is a separate step (`run_grader.sh`). A task passes only if
+`grader/check.sh` exits 0. Grading is behavior-based:
 
 1. **Build** — compiles cleanly with warnings-as-errors
 2. **Lint/format** — `clang-format`/`clang-tidy` (C++), `ruff` (Python)
@@ -86,18 +102,21 @@ The agent is told the acceptance criteria in `task.md` and in the repo's
 ## Usage
 
 ```bash
-# Run one task
+# Run one task, then grade it
 ./run_task.sh cpp-fix-warnings
+./run_grader.sh cpp-fix-warnings
 
 # Keep the temporary working directory for inspection
 ./run_task.sh cpp-fix-warnings --keep
+./run_grader.sh cpp-fix-warnings --keep
 
-# Run all tasks and print a summary table
+# Run and grade all tasks, then print a summary table
 ./run_all.sh
 ```
 
-Results are written to `results/<task-id>.json` (plus `.agent.log` and
-`.grade.log`).
+`run_grader.sh` must be run after `run_task.sh` for the same task; it fails with
+a clear error if no repo copy exists. Results are written to
+`results/<task-id>.json` (plus `.agent.log` and `.grade.log`).
 
 ### Result artifacts
 

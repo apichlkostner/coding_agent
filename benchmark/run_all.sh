@@ -15,7 +15,7 @@ declare -a ROWS=()
 
 for task_dir in "$BENCH_DIR"/tasks/*/; do
   task_id="$(basename "$task_dir")"
-  if "$BENCH_DIR/run_task.sh" "$task_id" "$@"; then
+  if "$BENCH_DIR/run_task.sh" "$task_id" "$@" && "$BENCH_DIR/run_grader.sh" "$task_id" "$@"; then
     status="PASS"
     PASS=$((PASS + 1))
   else
