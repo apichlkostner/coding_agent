@@ -115,7 +115,7 @@ def build_router(
 
         graph = _default
 
-    service = AgentService(graph)
+    service = AgentService(graph, preview_size=config.logging.preview_size)
     router = MessageRouter(service)
 
     # terminal always enabled
@@ -144,6 +144,7 @@ def build_one_shot_router(
     prompt: str | None = None,
     batch_input: str | None = None,
     batch_output: str | None = None,
+    config: Config,
 ) -> MessageRouter:
     """Build a router for one-shot execution only."""
     if graph is None:
@@ -151,7 +152,7 @@ def build_one_shot_router(
 
         graph = _default
 
-    service = AgentService(graph)
+    service = AgentService(graph, preview_size=config.logging.preview_size)
     router = MessageRouter(service)
 
     if prompt is not None:
@@ -174,11 +175,12 @@ async def _run(argv: list[str] | None = None) -> None:
         config = load_config()
 
         if args.prompt:
-            router = build_one_shot_router(prompt=args.prompt)
+            router = build_one_shot_router(prompt=args.prompt, config=config)
         elif args.batch_input and args.batch_output:
             router = build_one_shot_router(
                 batch_input=args.batch_input,
                 batch_output=args.batch_output,
+                config=config,
             )
         else:
             router = build_router(config)

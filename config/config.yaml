@@ -26,3 +26,7 @@ matrix_adapter:
   device_id: ${MATRIX_DEVICE_ID:-}
   store_path: ${MATRIX_STORE_PATH:-}
   ignore_unverified_devices: true
+logging:
+  # Maximum characters of message content written to the log.
+  # 0 or negative logs the full content.
+  preview_size: 200

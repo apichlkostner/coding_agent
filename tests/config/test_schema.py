@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from agent.config.schema import Config, MatrixAdapter, Model, ModelProvider
+from agent.config.schema import Config, Logging, MatrixAdapter, Model, ModelProvider
 
 
 @pytest.fixture
@@ -148,3 +148,21 @@ class TestConfig:
     def test_model_effort_roundtrip(self) -> None:
         model = Model(name="gpt-5.6-luna", effort="low")
         assert model.effort == "low"
+
+
+class TestLogging:
+    """Validation of the ``logging`` section."""
+
+    def test_default_preview_size(self) -> None:
+        assert Logging().preview_size == 200
+
+    def test_preview_size_override(self) -> None:
+        assert Logging(preview_size=0).preview_size == 0
+
+    def test_unknown_key_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            Logging(preview_size=10, bogus=1)  # type: ignore[call-arg]
+
+    def test_config_defaults_logging(self, valid_config: dict[str, Any]) -> None:
+        config = Config(**valid_config)
+        assert config.logging.preview_size == 200

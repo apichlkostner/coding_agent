@@ -105,6 +105,19 @@ class MatrixAdapter(BaseModel):
     ignore_unverified_devices: bool = True
 
 
+class Logging(BaseModel):
+    """Logging behaviour.
+
+    Attributes:
+        preview_size: Maximum number of characters of message content written
+            to the log.  ``0`` or a negative value logs the full content.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    preview_size: int = 200
+
+
 class Config(BaseModel):
     """Root configuration object.
 
@@ -114,6 +127,7 @@ class Config(BaseModel):
         discord_adapter: Discord adapter credentials.
         heartbeat: Heartbeat scheduling and output routing.
         matrix_adapter: Matrix adapter credentials and session settings.
+        logging: Logging behaviour.
 
     Adapter sections are optional; empty credentials disable the adapter.
     """
@@ -125,3 +139,4 @@ class Config(BaseModel):
     discord_adapter: DiscordAdapter = DiscordAdapter()
     heartbeat: Heartbeat = Heartbeat()
     matrix_adapter: MatrixAdapter = MatrixAdapter()
+    logging: Logging = Logging()

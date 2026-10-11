@@ -6,6 +6,7 @@ from agent.config.config import (
 )
 from agent.config.schema import (
     Heartbeat,
+    Logging,
     MatrixAdapter,
     Model,
     ModelProvider,
@@ -17,6 +18,7 @@ __all__ = [
     "load_config",
     "resolve_config_path",
     "Heartbeat",
+    "Logging",
     "MatrixAdapter",
     "Model",
     "ModelProvider",

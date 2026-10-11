@@ -20,6 +20,18 @@ from agent.router.messages import InboundMessage, OutboundMessage
 logger = logging.getLogger(__name__)
 
 
+def _preview(text: str, size: int) -> str:
+    """Return *text* truncated to *size* characters.
+
+    A non-positive *size* disables truncation and returns *text* unchanged.
+    When truncation happens an ellipsis (``…``) is appended so the log makes
+    the cut explicit.
+    """
+    if size <= 0 or len(text) <= size:
+        return text
+    return text[:size] + "…"
+
+
 class AgentService:
     """Wraps the LangGraph graph and streams :class:`OutboundMessage` objects.
 
@@ -32,11 +44,21 @@ class AgentService:
         When ``True`` (default), ``tool_call`` and ``tool_result`` messages
         are yielded in addition to the final ``response``.  Set to ``False``
         to surface only the agent's final reply.
+    preview_size:
+        Maximum number of characters of message content written to the log.
+        ``0`` or a negative value logs the full content.
     """
 
-    def __init__(self, graph: CompiledStateGraph, *, verbose: bool = True) -> None:
+    def __init__(
+        self,
+        graph: CompiledStateGraph,
+        *,
+        verbose: bool = True,
+        preview_size: int = 200,
+    ) -> None:
         self._graph = graph
         self._verbose = verbose
+        self._preview_size = preview_size
 
     async def run(
         self, message: InboundMessage
@@ -101,7 +123,10 @@ class AgentService:
                             extra={"event": {"type": "tool-call", "tool": tc["name"]}},
                         )
                     calls = ", ".join(
-                        tc["name"] + "(" + str(tc["args"])[:50] + ")"
+                        tc["name"]
+                        + "("
+                        + _preview(str(tc["args"]), self._preview_size)
+                        + ")"
                         for tc in last_msg.tool_calls
                     )
                     if self._verbose:
@@ -112,9 +137,7 @@ class AgentService:
                     # ``ToolNode`` returns every result in a single update, so
                     # iterate the whole list instead of only the last message.
                     for tool_msg in node_output["messages"]:
-                        preview = tool_msg.content[:200]
-                        if len(tool_msg.content) > 200:
-                            preview += "…"
+                        preview = _preview(tool_msg.content, self._preview_size)
                         logger.info(
                             "%s",
                             preview,
@@ -133,7 +156,7 @@ class AgentService:
                     runtime = round(time.perf_counter() - start_time, 2)
                     logger.info(
                         "%s",
-                        last_msg.content[:100],
+                        _preview(last_msg.content, self._preview_size),
                         extra={
                             "event": "agent-response",
                             "usage_metadata": usage_metadata_cb.usage_metadata,
@@ -144,4 +167,7 @@ class AgentService:
 
         except Exception as exc:  # noqa: BLE001
             logger.exception("AgentService error: %s: %s", type(exc).__name__, exc)
-            yield _make(f"{type(exc).__name__}: {exc!s:.200}", "error")
+            yield _make(
+                _preview(f"{type(exc).__name__}: {exc!s}", self._preview_size),
+                "error",
+            )

@@ -169,7 +169,9 @@ class TestRunWorkingDirectory:
 
 class TestOneShotRouter:
     def test_build_one_shot_router_registers_prompt_adapter(self) -> None:
-        router = build_one_shot_router(graph=_mock_graph(), prompt="hi")
+        router = build_one_shot_router(
+            graph=_mock_graph(), prompt="hi", config=_config()
+        )
 
         assert "prompt" in router._adapters
         assert isinstance(router._adapters["prompt"], PromptAdapter)
@@ -179,6 +181,7 @@ class TestOneShotRouter:
             graph=_mock_graph(),
             batch_input="prompts.txt",
             batch_output="out.jsonl",
+            config=_config(),
         )
 
         assert "batch" in router._adapters

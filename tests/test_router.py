@@ -343,6 +343,38 @@ class TestAgentService:
         # 200 chars of content + ellipsis
         assert results[0].content == "x" * 200 + "…"
 
+    async def test_tool_result_full_when_preview_size_zero(self) -> None:
+        long_content = "x" * 300
+        tool_msg = ToolMessage(content=long_content, tool_call_id="tc1", name="bash")
+
+        graph = _make_graph({"tools": {"messages": [tool_msg]}})
+        service = AgentService(graph, verbose=True, preview_size=0)
+
+        results = [msg async for msg in service.run(_inbound())]
+
+        assert results[0].content == long_content
+
+    async def test_tool_result_custom_preview_size(self) -> None:
+        long_content = "x" * 300
+        tool_msg = ToolMessage(content=long_content, tool_call_id="tc1", name="bash")
+
+        graph = _make_graph({"tools": {"messages": [tool_msg]}})
+        service = AgentService(graph, verbose=True, preview_size=50)
+
+        results = [msg async for msg in service.run(_inbound())]
+
+        assert results[0].content == "x" * 50 + "…"
+
+    async def test_tool_result_shorter_than_preview_untouched(self) -> None:
+        tool_msg = ToolMessage(content="short", tool_call_id="tc1", name="bash")
+
+        graph = _make_graph({"tools": {"messages": [tool_msg]}})
+        service = AgentService(graph, verbose=True, preview_size=50)
+
+        results = [msg async for msg in service.run(_inbound())]
+
+        assert results[0].content == "short"
+
     async def test_parallel_tool_calls_yield_one_result_each(self) -> None:
         """A single tools update carrying N ToolMessages yields N tool_results."""
         ai_with_tools = AIMessage(content="")

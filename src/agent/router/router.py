@@ -142,7 +142,7 @@ class MessageRouter:
                     return
 
                 logger.debug(
-                    "Received Discord request from %s: %s",
+                    "Received request from %s: %s",
                     message.reply_channel_id,
                     message.content[:100],
                 )
