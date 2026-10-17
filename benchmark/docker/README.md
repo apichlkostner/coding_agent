@@ -33,6 +33,12 @@ Run these on the host, from the repository root.
 ./benchmark/docker/run_container.sh --stop
 ```
 
+The container is started with `--add-host=host.docker.internal:host-gateway`,
+so host-relative endpoints in the injected `.env` (for example
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318`) resolve from
+inside the container. Without this mapping, OpenTelemetry span exports fail
+with a `NameResolutionError`.
+
 ## Devcontainer workflow
 
 Run these inside the devcontainer.

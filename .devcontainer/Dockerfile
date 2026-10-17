@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y \
     clangd \
     clang-tidy \
     clang-format \
-    firejail
+    ripgrep
 
 RUN su vscode -c " \
     source /usr/local/share/nvm/nvm.sh && \

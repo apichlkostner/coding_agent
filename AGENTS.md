@@ -20,16 +20,14 @@ A LangGraph ReAct coding agent with messenger and terminal adapters.
 
 ## Architecture
 
-- `graph.py` — builds the `StateGraph` (ReAct loop)
-- `nodes.py` — graph nodes (model call, tool execution)
-- `state.py` — `AgentState` TypedDict passed between nodes
-- `router/` — `MessageRouter` + `AgentService`; routes inbound/outbound messages
-- `adapters/` — one adapter per channel (terminal, Discord, Matrix, heartbeat, batch, prompt)
-- `tools/` — agent tools, grouped by domain (filesystem, lsp, treesitter, memory, …)
-- `config/` — YAML loading, `${VAR}` expansion, secret validation
-- `lsp/` — generic LSP client (clangd, pyright-langserver)
-
-Adapters implement `BaseAdapter` and register with the router. Adapter registration is config-driven.
+- `graph.py` — assembles and compiles the LangGraph ReAct loop: the agent calls the model, `ToolNode` runs requested tools, then control returns to the agent.
+- `nodes.py` — model-call node; `state.py` defines the `AgentState` shared across graph nodes.
+- `tools/` — LangChain tools exposed to the graph, grouped by domain (filesystem, shell, memory, Tree-sitter, LSP, notifications); `get_tools()` assembles the runtime list.
+- `router/` — `AgentService` streams graph events as outbound messages; `MessageRouter` dispatches inbound messages to it and sends replies back through the originating adapter.
+- `adapters/` — `BaseAdapter` and channel implementations for terminal, Discord, Matrix, heartbeat, prompt, and batch input. Normal startup always registers terminal and conditionally registers Discord, heartbeat, and Matrix from their configuration; prompt and batch adapters are used by their respective CLI modes.
+- `config/` — YAML configuration loading and validation, including `${VAR}` expansion and secret checks.
+- `lsp/` — shared Language Server Protocol client and tool support for language servers such as clangd and pyright-langserver.
+- `__main__.py` — CLI startup, configuration loading, router construction, and adapter registration.
 
 ## Commands
 
@@ -56,6 +54,13 @@ Adapters implement `BaseAdapter` and register with the router. Adapter registrat
 - Mark tests needing real services/binaries with `@pytest.mark.integration`
 - `tests/fixtures/` and `tests/testfolder/` contain intentionally broken/malformed data — never "fix" them
 - Add or adapt tests for every behavior change
+
+## Benchmark
+
+- The agent of this project has a benchmark in folder ./benchmark
+- It can be run locally or in a remote Docker container
+- It can run multiple coding tasks and grade the result
+- See benchmark/README.md if your task is related to the benchmark
 
 ## Configuration
 

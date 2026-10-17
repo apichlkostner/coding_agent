@@ -13,8 +13,10 @@
 #
 # Usage:
 #   ./run_task_remote.sh <task-id> [--keep] [--host <host>] [--port <port>]
+#   ./run_task_remote.sh --all [--keep] [--host <host>] [--port <port>]
 #
 # Options:
+#   --all         Run every task in benchmark/tasks/ and print a summary.
 #   --keep        Keep the remote working directory for inspection.
 #   --host <h>    SSH host (default: host.docker.internal inside a container,
 #                 otherwise localhost).
@@ -26,9 +28,11 @@ REPO_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
 RESULTS_DIR="$BENCH_DIR/results"
 
 TASK_ID=""
+RUN_ALL=0
 KEEP=0
 HOST="localhost"
 PORT=2222
+FWD_ARGS=()
 
 # Default host: inside a container (e.g. the devcontainer), `localhost` is not
 # the host's `localhost`, so the published port is only reachable via the
@@ -41,19 +45,51 @@ fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --keep) KEEP=1; shift ;;
-    --host) HOST="$2"; shift 2 ;;
-    --port) PORT="$2"; shift 2 ;;
+    --all) RUN_ALL=1; shift ;;
+    --keep) KEEP=1; FWD_ARGS+=(--keep); shift ;;
+    --host) HOST="$2"; FWD_ARGS+=(--host "$2"); shift 2 ;;
+    --port) PORT="$2"; FWD_ARGS+=(--port "$2"); shift 2 ;;
     -*) echo "Unknown option: $1" >&2; exit 2 ;;
     *) TASK_ID="$1"; shift ;;
   esac
 done
 
-if [[ -z "$TASK_ID" ]]; then
-  echo "Usage: $0 <task-id> [--keep] [--host <host>] [--port <port>]" >&2
+if [[ -z "$TASK_ID" && "$RUN_ALL" -eq 0 ]]; then
+  echo "Usage: $0 <task-id>|--all [--keep] [--host <host>] [--port <port>]" >&2
   echo "Available tasks:" >&2
   ls -1 "$BENCH_DIR/tasks" >&2
   exit 2
+fi
+
+if [[ "$RUN_ALL" -eq 1 ]]; then
+  # Run every task, then print a summary table like run_all.sh.
+  PASS=0
+  FAIL=0
+  declare -a ROWS=()
+  for task_dir in "$BENCH_DIR"/tasks/*/; do
+    task_id="$(basename "$task_dir")"
+    if "$0" "$task_id" "${FWD_ARGS[@]}"; then
+      status="PASS"
+      PASS=$((PASS + 1))
+    else
+      status="FAIL"
+      FAIL=$((FAIL + 1))
+    fi
+    ROWS+=("$task_id|$status")
+  done
+
+  echo
+  echo "==================== Benchmark summary ===================="
+  printf "%-28s %s\n" "TASK" "RESULT"
+  printf "%-28s %s\n" "----" "------"
+  for row in "${ROWS[@]}"; do
+    printf "%-28s %s\n" "${row%%|*}" "${row##*|}"
+  done
+  echo "-----------------------------------------------------------"
+  printf "Total: %d  Passed: %d  Failed: %d\n" "$((PASS + FAIL))" "$PASS" "$FAIL"
+
+  [[ "$FAIL" -eq 0 ]]
+  exit $?
 fi
 
 TASK_DIR="$BENCH_DIR/tasks/$TASK_ID"

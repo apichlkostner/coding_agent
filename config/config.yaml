@@ -7,7 +7,7 @@ model_provider:
   endpoint: ${LITELLM_BASE_URL:-http://litellm:4000/v1}
 
 model:
-    name: gpt-6-luna
+    name: deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731
     effort: high
     
 discord_adapter:
@@ -30,3 +30,7 @@ logging:
   # Maximum characters of message content written to the log.
   # 0 or negative logs the full content.
   preview_size: 200
+  # When true, tool inputs/outputs are attached to trace spans (bounded by
+  # preview_size). Keep false to avoid exporting commands, file contents, or
+  # secrets to the configured collector.
+  capture_payloads: false

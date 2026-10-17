@@ -85,9 +85,13 @@ else
 fi
 
 echo "==> Starting $CONTAINER on port $PORT (network: $NETWORK)"
+# Map host.docker.internal to the host gateway so host-relative endpoints in the
+# injected .env (e.g. OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318)
+# resolve from inside the container, matching the devcontainer's runArgs.
 docker run -d \
   --name "$CONTAINER" \
   --network "$NETWORK" \
+  --add-host=host.docker.internal:host-gateway \
   -p "${PORT}:22" \
   "${ENV_ARGS[@]}" \
   "$IMAGE" >/dev/null
