@@ -7,6 +7,7 @@
 # directory, so ``load_dotenv()`` (which searches upward from the CWD) is not
 # sufficient.  Load the agent repository's own ``.env`` explicitly first, then
 # fall back to CWD discovery for direct ``python -m agent`` runs.
+
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -16,5 +17,6 @@ load_dotenv(_AGENT_REPO_ROOT / ".env")
 load_dotenv()
 
 from agent.graph import build_graph, graph  # noqa: E402
+from agent.telemetry import configure_telemetry, get_tracer  # noqa: E402
 
-__all__ = ["build_graph", "graph"]
+__all__ = ["build_graph", "graph", "configure_telemetry", "get_tracer"]

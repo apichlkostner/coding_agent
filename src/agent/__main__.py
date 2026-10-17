@@ -33,10 +33,12 @@ from agent.adapters.terminal_adapter import TerminalAdapter
 from agent.config import Config, load_config
 from agent.logging_config import configure_logging
 from agent.router import AgentService, MessageRouter
+from agent.telemetry import configure_telemetry
 
 if TYPE_CHECKING:
     pass
 #     from langgraph.graph.state import CompiledStateGraph
+
 
 GraphType = Any
 
@@ -115,7 +117,11 @@ def build_router(
 
         graph = _default
 
-    service = AgentService(graph, preview_size=config.logging.preview_size)
+    service = AgentService(
+        graph,
+        preview_size=config.logging.preview_size,
+        capture_payloads=config.logging.capture_payloads,
+    )
     router = MessageRouter(service)
 
     # terminal always enabled
@@ -152,7 +158,11 @@ def build_one_shot_router(
 
         graph = _default
 
-    service = AgentService(graph, preview_size=config.logging.preview_size)
+    service = AgentService(
+        graph,
+        preview_size=config.logging.preview_size,
+        capture_payloads=config.logging.capture_payloads,
+    )
     router = MessageRouter(service)
 
     if prompt is not None:
@@ -207,6 +217,10 @@ def main() -> None:
     # direct ``python -m agent`` runs that bypass the package import order.
     load_dotenv()
     configure_logging()
+    configure_telemetry(
+        service_name="coding-agent",
+        endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
+    )
 
     asyncio.run(_run(sys.argv[1:]))
 

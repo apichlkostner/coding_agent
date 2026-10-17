@@ -159,6 +159,12 @@ class TestLogging:
     def test_preview_size_override(self) -> None:
         assert Logging(preview_size=0).preview_size == 0
 
+    def test_default_capture_payloads(self) -> None:
+        assert Logging().capture_payloads is False
+
+    def test_capture_payloads_override(self) -> None:
+        assert Logging(capture_payloads=True).capture_payloads is True
+
     def test_unknown_key_rejected(self) -> None:
         with pytest.raises(ValidationError):
             Logging(preview_size=10, bogus=1)  # type: ignore[call-arg]
@@ -166,3 +172,4 @@ class TestLogging:
     def test_config_defaults_logging(self, valid_config: dict[str, Any]) -> None:
         config = Config(**valid_config)
         assert config.logging.preview_size == 200
+        assert config.logging.capture_payloads is False

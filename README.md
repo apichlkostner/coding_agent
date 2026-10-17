@@ -57,7 +57,9 @@ Adapter registration is driven by configuration, not a separate enable list: the
 
 The checked-in [`config/config.yaml`](config/config.yaml) is a complete example. Non-secret values can be literal YAML values or environment substitutions. Secret values (`model_provider.api_key`, `matrix_adapter.access_token`, and `discord_adapter.bot_token`) must use environment substitutions: `${VAR}` requires the variable to be set, while `${VAR:-}` allows an empty value for an optional integration. Non-empty secret defaults are rejected.
 
-Optional integrations still use environment variables: `TAVILY_API_KEY` enables web search, and `LANGCHAIN_TRACING_V2`, `LANGCHAIN_ENDPOINT`, `LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT` configure LangSmith tracing.
+Optional integrations still use environment variables: `TAVILY_API_KEY` enables web search, and `LANGCHAIN_TRACING_V2`, `LANGCHAIN_ENDPOINT`, `LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT` configure LangSmith tracing. OpenTelemetry exports agent, model, and tool spans over OTLP/HTTP to the collector configured by `OTEL_EXPORTER_OTLP_ENDPOINT` in `.env` (the example uses `http://localhost:4318`; the collector must be reachable from the agent). This base URL is extended with `/v1/traces`. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` can instead specify the full traces URL and takes precedence over the base URL.
+
+Tool inputs and outputs are omitted from spans by default. Set `logging.capture_payloads: true` in `config/config.yaml` to include them, bounded by `logging.preview_size`. A non-positive `preview_size` disables truncation, so keep it positive when capturing payloads.
 
 ## Usage
 

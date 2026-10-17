@@ -10,12 +10,14 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import AIMessage, ToolMessage
 
-from agent.router.agent_service import AgentService
+from agent import telemetry
+from agent.router.agent_service import AgentService, ModelSpanCallback, ToolSpanCallback
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
@@ -511,6 +513,168 @@ class TestAgentService:
         ]
         assert tool_records
         assert all(not hasattr(r, "runtime") for r in tool_records)
+
+
+# ---------------------------------------------------------------------------
+# AgentService — OpenTelemetry spans
+# ---------------------------------------------------------------------------
+
+
+class _SpanRecorder:
+    """Collect finished spans from a dedicated tracer provider."""
+
+    def __init__(self) -> None:
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        self.exporter = InMemorySpanExporter()
+        self.provider = TracerProvider()
+        self.provider.add_span_processor(SimpleSpanProcessor(self.exporter))
+
+    def spans(self) -> list[Any]:
+        return list(self.exporter.get_finished_spans())
+
+    def by_name(self, name: str) -> list[Any]:
+        return [s for s in self.spans() if s.name == name]
+
+
+@pytest.fixture
+def span_recorder(monkeypatch: pytest.MonkeyPatch) -> _SpanRecorder:
+    """Route ``telemetry.get_tracer`` to an in-memory provider."""
+    recorder = _SpanRecorder()
+    monkeypatch.setattr(
+        telemetry, "get_tracer", lambda: recorder.provider.get_tracer("test")
+    )
+    return recorder
+
+
+class TestAgentServiceSpans:
+    async def test_failed_run_marks_span_error(
+        self, span_recorder: _SpanRecorder
+    ) -> None:
+        from opentelemetry.trace import StatusCode
+
+        async def _boom(*args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
+            raise RuntimeError("graph exploded")
+            yield  # make it a generator
+
+        graph = MagicMock()
+        graph.astream = _boom
+        service = AgentService(graph)
+
+        _ = [msg async for msg in service.run(_inbound())]
+
+        run_spans = span_recorder.by_name("agent.run")
+        assert len(run_spans) == 1
+        assert run_spans[0].status.status_code == StatusCode.ERROR
+        assert "RuntimeError" in (run_spans[0].status.description or "")
+
+    async def test_successful_run_span_not_error(
+        self, span_recorder: _SpanRecorder
+    ) -> None:
+        from opentelemetry.trace import StatusCode
+
+        graph = _make_graph({"agent": {"messages": [AIMessage(content="Hi")]}})
+        service = AgentService(graph)
+
+        _ = [msg async for msg in service.run(_inbound())]
+
+        run_spans = span_recorder.by_name("agent.run")
+        assert run_spans[0].status.status_code != StatusCode.ERROR
+
+    async def test_tool_payloads_omitted_by_default(
+        self, span_recorder: _SpanRecorder
+    ) -> None:
+        cb = ToolSpanCallback()
+        cb.on_tool_start(
+            {"name": "bash"},
+            "secret-command",
+            run_id="r1",
+            inputs={"cmd": "secret-command"},
+        )
+        cb.on_tool_end("secret-output", run_id="r1")
+
+        spans = span_recorder.by_name("tool.bash")
+        assert len(spans) == 1
+        attrs = spans[0].attributes
+        assert attrs["tool.name"] == "bash"
+        assert "tool.input" not in attrs
+        assert "tool.output" not in attrs
+        assert "tool.args.cmd" not in attrs
+
+    async def test_tool_payloads_bounded_when_captured(
+        self, span_recorder: _SpanRecorder
+    ) -> None:
+        cb = ToolSpanCallback(preview_size=10, capture_payloads=True)
+        cb.on_tool_start(
+            {"name": "bash"},
+            "x" * 100,
+            run_id="r1",
+            inputs={"cmd": "y" * 100},
+        )
+        cb.on_tool_end("z" * 100, run_id="r1")
+
+        spans = span_recorder.by_name("tool.bash")
+        attrs = spans[0].attributes
+        assert attrs["tool.input"] == "x" * 10 + "…"
+        assert attrs["tool.args.cmd"] == "y" * 10 + "…"
+        assert attrs["tool.output"] == "z" * 10 + "…"
+
+    async def test_model_span_records_name_and_usage(
+        self, span_recorder: _SpanRecorder
+    ) -> None:
+        from langchain_core.outputs import LLMResult
+
+        cb = ModelSpanCallback()
+        cb.on_chat_model_start(
+            {"name": "ChatOpenAI"},
+            [[]],
+            run_id="m1",
+            invocation_params={"model": "gpt-test"},
+        )
+        response = LLMResult(
+            generations=[],
+            llm_output={"token_usage": {"prompt_tokens": 5, "completion_tokens": 7}},
+        )
+        cb.on_llm_end(response, run_id="m1")
+
+        spans = span_recorder.by_name("model.call")
+        assert len(spans) == 1
+        attrs = spans[0].attributes
+        assert attrs["model.name"] == "gpt-test"
+        assert attrs["model.usage.prompt_tokens"] == 5
+        assert attrs["model.usage.completion_tokens"] == 7
+
+    async def test_run_span_records_usage_metadata(
+        self, span_recorder: _SpanRecorder
+    ) -> None:
+        graph = _make_graph({"agent": {"messages": [AIMessage(content="Hi")]}})
+        service = AgentService(graph)
+
+        # Patch the usage callback to report aggregated usage.
+        class _StubUsage(UsageMetadataCallbackHandler):
+            def __init__(self) -> None:
+                super().__init__()
+                self.usage_metadata = {
+                    "gpt-test": {
+                        "input_tokens": 3,
+                        "output_tokens": 4,
+                        "total_tokens": 7,
+                    }
+                }
+
+        with patch(
+            "agent.router.agent_service.UsageMetadataCallbackHandler", _StubUsage
+        ):
+            _ = [msg async for msg in service.run(_inbound())]
+
+        run_spans = span_recorder.by_name("agent.run")
+        attrs = run_spans[0].attributes
+        assert attrs["model.usage.gpt-test.input_tokens"] == 3
+        assert attrs["model.usage.gpt-test.output_tokens"] == 4
 
 
 # ---------------------------------------------------------------------------

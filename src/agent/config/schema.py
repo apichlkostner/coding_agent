@@ -111,11 +111,16 @@ class Logging(BaseModel):
     Attributes:
         preview_size: Maximum number of characters of message content written
             to the log.  ``0`` or a negative value logs the full content.
+        capture_payloads: When ``True``, tool inputs and outputs are attached
+            to trace spans (bounded by ``preview_size``).  Defaults to
+            ``False`` so commands, file contents, or secrets in tool results
+            are not exported to the configured collector.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     preview_size: int = 200
+    capture_payloads: bool = False
 
 
 class Config(BaseModel):
