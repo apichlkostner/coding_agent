@@ -25,6 +25,15 @@ RUN apt-get update && apt-get install -y \
     clang-format \
     ripgrep
 
+# ---------------------------------------------------------------------------
+# Bind-mount targets for persisted state (see devcontainer.json).
+# Docker creates missing mount targets as root-owned directories, which would
+# leave the VS Code server unable to write its own state. Create them here with
+# the correct ownership instead.
+# ---------------------------------------------------------------------------
+RUN mkdir -p /home/vscode/.vscode-server/data/User /home/vscode/.history \
+    && chown -R vscode:vscode /home/vscode/.vscode-server /home/vscode/.history
+
 RUN su vscode -c " \
     source /usr/local/share/nvm/nvm.sh && \
     npm install -g @earendil-works/pi-coding-agent && \

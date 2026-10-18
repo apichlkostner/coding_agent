@@ -49,6 +49,10 @@ langgraph.json
 # Agent memory persistence
 .agent_memory.json
 
+# Temporary export of container-local VS Code state, used once to seed the
+# host-side bind mount declared in .devcontainer/devcontainer.json
+.devcontainer-state-export/
+
 # Benchmark harness: task repos, solutions, and results stay local
 benchmark/results/
 benchmark/.env

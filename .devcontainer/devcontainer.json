@@ -12,14 +12,36 @@
   "workspaceFolder": "/workspaces/coding_agent",
 
   // ---------------------------------------------------------------------------
-  // Mount the host pi config directory into the container so credentials,
-  // settings, sessions, extensions, skills, prompts, themes, and custom
-  // models are shared automatically. No re-authentication required.
+  // Persist state that would otherwise live in the container's writable layer
+  // and be lost on every rebuild:
+  //
+  //   .pi/agent     pi credentials, settings, sessions, skills, prompts
+  //   vscode-user   VS Code user state: Copilot chat history (globalStorage),
+  //                 per-workspace chat sessions (workspaceStorage), local file
+  //                 history, snippets, user settings.json
+  //   history       shell history, redirected here by
+  //                 .devcontainer/shell-history.sh (HISTFILE)
+  //
+  // The host directories are created by initializeCommand before the
+  // container starts, so Docker never creates root-owned bind sources. The
+  // same script seeds them once from .devcontainer-state-export/, which holds
+  // the state captured from the container before these mounts existed.
   // ---------------------------------------------------------------------------
+  "initializeCommand": "sh ${localWorkspaceFolder}/.devcontainer/persist-init.sh ${localWorkspaceFolder}/.devcontainer-state-export",
   "mounts": [
     {
       "source": "${localEnv:HOME}/.pi/agent",
       "target": "/home/vscode/.pi/agent",
+      "type": "bind"
+    },
+    {
+      "source": "${localEnv:HOME}/.devcontainer-state/coding_agent/vscode-user",
+      "target": "/home/vscode/.vscode-server/data/User",
+      "type": "bind"
+    },
+    {
+      "source": "${localEnv:HOME}/.devcontainer-state/coding_agent/history",
+      "target": "/home/vscode/.history",
       "type": "bind"
     }
   ],
@@ -30,8 +52,12 @@
 
   // Post-create: install all Python dependencies (including dev group).
   // uv reads pyproject.toml and writes a .venv inside the workspace.
+  //
+  // The second step redirects bash history into the persisted mount and lifts
+  // the default HISTSIZE/HISTFILESIZE (1000/2000 from the base image .bashrc).
+  // Guarded by a marker so repeated creates do not append duplicates.
   // ---------------------------------------------------------------------------
-  "postCreateCommand": "uv sync --all-groups",
+  "postCreateCommand": "uv sync --all-groups && { grep -q devcontainer-shell-history ~/.bashrc || printf '\\n# devcontainer-shell-history\\nsource /workspaces/coding_agent/.devcontainer/shell-history.sh\\n' >> ~/.bashrc; }",
 
   "remoteEnv": {
     "OLLAMA_BASE_URL": "http://host.docker.internal:11434",
