@@ -25,7 +25,26 @@ from agent.router.messages import InboundMessage, OutboundMessage
 logger = logging.getLogger(__name__)
 
 
-class ToolSpanCallback(BaseCallbackHandler):
+class _SpanCallback(BaseCallbackHandler):
+    def __init__(self) -> None:
+        self._tracer = telemetry.get_tracer()
+        self._spans: dict[Any, Span] = {}
+        self._parent_context: Context | None = None
+
+    def set_parent_context(self, context: Context) -> None:
+        """Set the context tool spans are parented under."""
+        self._parent_context = context
+
+    def on_error(self, error: BaseException, *, run_id: Any) -> None:
+        span = self._spans.pop(run_id, None)
+        if span is None:
+            return
+        span.record_exception(error)
+        span.set_status(Status(StatusCode.ERROR, str(error)))
+        span.end()
+
+
+class ToolSpanCallback(_SpanCallback):
     """Emit one OpenTelemetry span per tool call.
 
     ``on_tool_start`` opens the span and stores it keyed by ``run_id``;
@@ -41,19 +60,9 @@ class ToolSpanCallback(BaseCallbackHandler):
     def __init__(
         self, *, preview_size: int = 200, capture_payloads: bool = False
     ) -> None:
-        self._tracer = telemetry.get_tracer()
-        self._spans: dict[Any, Span] = {}
-        self._parent_context: Context | None = None
+        super().__init__()
         self._preview_size = preview_size
         self._capture_payloads = capture_payloads
-
-    def set_parent_context(self, context: Context) -> None:
-        """Set the context tool spans are parented under.
-
-        Called by :meth:`AgentService.run` with the ``agent.run`` span's
-        context so tool spans nest under it instead of becoming roots.
-        """
-        self._parent_context = context
 
     def on_tool_start(
         self,
@@ -88,15 +97,10 @@ class ToolSpanCallback(BaseCallbackHandler):
     def on_tool_error(
         self, error: BaseException, *, run_id: Any, **kwargs: Any
     ) -> None:
-        span = self._spans.pop(run_id, None)
-        if span is None:
-            return
-        span.record_exception(error)
-        span.set_status(Status(StatusCode.ERROR, str(error)))
-        span.end()
+        self.on_error(error, run_id=run_id)
 
 
-class ModelSpanCallback(BaseCallbackHandler):
+class ModelSpanCallback(_SpanCallback):
     """Emit one OpenTelemetry span per model call.
 
     ``on_chat_model_start`` opens the span and stores it keyed by ``run_id``;
@@ -107,13 +111,7 @@ class ModelSpanCallback(BaseCallbackHandler):
     """
 
     def __init__(self) -> None:
-        self._tracer = telemetry.get_tracer()
-        self._spans: dict[Any, Span] = {}
-        self._parent_context: Context | None = None
-
-    def set_parent_context(self, context: Context) -> None:
-        """Set the context model spans are parented under."""
-        self._parent_context = context
+        super().__init__()
 
     def on_chat_model_start(
         self,
@@ -138,12 +136,7 @@ class ModelSpanCallback(BaseCallbackHandler):
         span.end()
 
     def on_llm_error(self, error: BaseException, *, run_id: Any, **kwargs: Any) -> None:
-        span = self._spans.pop(run_id, None)
-        if span is None:
-            return
-        span.record_exception(error)
-        span.set_status(Status(StatusCode.ERROR, str(error)))
-        span.end()
+        self.on_error(error, run_id=run_id)
 
 
 def _model_name(serialized: dict[str, Any], kwargs: dict[str, Any]) -> str | None:
@@ -168,6 +161,17 @@ def _record_usage(span: Span, response: Any) -> None:
     for key, value in usage.items():
         if isinstance(value, int):
             span.set_attribute(f"model.usage.{key}", value)
+        if isinstance(value, dict):
+            if (
+                key == "completion_tokens_details"
+                and (reasoning_tokens := value.get("reasoning_tokens")) is not None
+            ):
+                span.set_attribute("model.usage.reasoning_tokens", reasoning_tokens)
+            if (
+                key == "prompt_tokens_details"
+                and (cached_tokens := value.get("cached_tokens")) is not None
+            ):
+                span.set_attribute("model.usage.cached_tokens", cached_tokens)
 
 
 def _record_run_usage(span: Span, usage: dict[str, Any]) -> None:
