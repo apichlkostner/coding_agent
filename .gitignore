@@ -64,6 +64,9 @@ benchmark/tasks/*/repo/__pycache__/
 benchmark/tasks/*/repo/.pytest_cache/
 benchmark/tasks/*/repo/.ruff_cache/
 
+# config
+opencode.jsonc
+
 # local copies of docs
 docs/index.md
 docs/opencode

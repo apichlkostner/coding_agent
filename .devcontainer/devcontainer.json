@@ -61,7 +61,8 @@
 
   "remoteEnv": {
     "OLLAMA_BASE_URL": "http://host.docker.internal:11434",
-    "LITELLM_BASE_URL": "http://litellm:4000/v1"
+    "LITELLM_BASE_URL": "http://litellm:4000/v1",
+    "LITELLM_API_KEY": "${localEnv:LITELLM_API_KEY}"
   },
 
   // ---------------------------------------------------------------------------

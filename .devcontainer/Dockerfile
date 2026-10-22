@@ -37,6 +37,6 @@ RUN mkdir -p /home/vscode/.vscode-server/data/User /home/vscode/.history \
 RUN su vscode -c " \
     source /usr/local/share/nvm/nvm.sh && \
     npm install -g @earendil-works/pi-coding-agent && \
-    npm install -g opencode-ai && \
+    npm install -g @opencode/cli && \
     npm install -g pyright \
 "
