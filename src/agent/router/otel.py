@@ -5,6 +5,10 @@ from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 from opentelemetry.context import Context
+from opentelemetry.semconv._incubating.attributes import (
+    gen_ai_attributes as gen_ai_attr,
+)
+from opentelemetry.semconv.attributes import error_attributes as error_attr
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
 from agent import telemetry
@@ -35,10 +39,10 @@ _PROVIDER_HINTS: dict[str, str] = {
 #: Provider token-usage keys mapped to GenAI semantic-convention attributes.
 #: ``total_tokens`` has no current convention attribute and is left out.
 _GENAI_USAGE_KEYS: dict[str, str] = {
-    "prompt_tokens": "gen_ai.usage.input_tokens",
-    "completion_tokens": "gen_ai.usage.output_tokens",
-    "input_tokens": "gen_ai.usage.input_tokens",
-    "output_tokens": "gen_ai.usage.output_tokens",
+    "prompt_tokens": gen_ai_attr.GEN_AI_USAGE_INPUT_TOKENS,
+    "completion_tokens": gen_ai_attr.GEN_AI_USAGE_OUTPUT_TOKENS,
+    "input_tokens": gen_ai_attr.GEN_AI_USAGE_INPUT_TOKENS,
+    "output_tokens": gen_ai_attr.GEN_AI_USAGE_OUTPUT_TOKENS,
 }
 
 
@@ -59,7 +63,7 @@ class _SpanCallback(BaseCallbackHandler):
         span.record_exception(error)
         # GenAI conventions: ``error.type`` carries a low-cardinality error
         # class, here the exception type name.
-        span.set_attribute("error.type", type(error).__name__)
+        span.set_attribute(error_attr.ERROR_TYPE, type(error).__name__)
         span.set_status(Status(StatusCode.ERROR, str(error)))
         span.end()
 
@@ -99,15 +103,15 @@ class ToolSpanCallback(_SpanCallback):
             context=self._parent_context,
             kind=SpanKind.INTERNAL,
         )
-        span.set_attribute("gen_ai.operation.name", _OP_EXECUTE_TOOL)
-        span.set_attribute("gen_ai.tool.name", name)
-        span.set_attribute("gen_ai.tool.type", "function")
+        span.set_attribute(gen_ai_attr.GEN_AI_OPERATION_NAME, _OP_EXECUTE_TOOL)
+        span.set_attribute(gen_ai_attr.GEN_AI_TOOL_NAME, name)
+        span.set_attribute(gen_ai_attr.GEN_AI_TOOL_TYPE, "function")
         description = serialized.get("description")
         if isinstance(description, str) and description:
-            span.set_attribute("gen_ai.tool.description", description)
+            span.set_attribute(gen_ai_attr.GEN_AI_TOOL_DESCRIPTION, description)
         if self._capture_payloads:
             span.set_attribute(
-                "gen_ai.tool.call.arguments",
+                gen_ai_attr.GEN_AI_TOOL_CALL_ARGUMENTS,
                 string_preview(input_str, self._preview_size),
             )
         self._spans[run_id] = span
@@ -118,7 +122,7 @@ class ToolSpanCallback(_SpanCallback):
             return
         if self._capture_payloads:
             span.set_attribute(
-                "gen_ai.tool.call.result",
+                gen_ai_attr.GEN_AI_TOOL_CALL_RESULT,
                 string_preview(str(output), self._preview_size),
             )
         span.set_status(Status(StatusCode.OK))
@@ -158,12 +162,12 @@ class ModelSpanCallback(_SpanCallback):
         span = self._tracer.start_span(
             span_name, context=self._parent_context, kind=SpanKind.CLIENT
         )
-        span.set_attribute("gen_ai.operation.name", _OP_CHAT)
+        span.set_attribute(gen_ai_attr.GEN_AI_OPERATION_NAME, _OP_CHAT)
         provider = _provider_name(serialized)
         if provider:
-            span.set_attribute("gen_ai.provider.name", provider)
+            span.set_attribute(gen_ai_attr.GEN_AI_PROVIDER_NAME, provider)
         if model_name:
-            span.set_attribute("gen_ai.request.model", model_name)
+            span.set_attribute(gen_ai_attr.GEN_AI_REQUEST_MODEL, model_name)
         self._spans[run_id] = span
 
     def on_llm_end(self, response: Any, *, run_id: Any, **kwargs: Any) -> None:
@@ -224,14 +228,16 @@ def _record_usage(span: Span, response: Any) -> None:
                 and (reasoning_tokens := value.get("reasoning_tokens")) is not None
             ):
                 span.set_attribute(
-                    "gen_ai.usage.reasoning.output_tokens", reasoning_tokens
+                    gen_ai_attr.GEN_AI_USAGE_REASONING_OUTPUT_TOKENS,
+                    reasoning_tokens,
                 )
             if (
                 key == "prompt_tokens_details"
                 and (cached_tokens := value.get("cached_tokens")) is not None
             ):
                 span.set_attribute(
-                    "gen_ai.usage.cache_read.input_tokens", cached_tokens
+                    gen_ai_attr.GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS,
+                    cached_tokens,
                 )
 
 
@@ -275,9 +281,9 @@ def init_agent_span(message: InboundMessage):
         f"{_OP_INVOKE_AGENT} {_AGENT_NAME}",
         kind=SpanKind.INTERNAL,
         attributes={
-            "gen_ai.operation.name": _OP_INVOKE_AGENT,
-            "gen_ai.agent.name": _AGENT_NAME,
-            "gen_ai.conversation.id": message.thread_id,
+            gen_ai_attr.GEN_AI_OPERATION_NAME: _OP_INVOKE_AGENT,
+            gen_ai_attr.GEN_AI_AGENT_NAME: _AGENT_NAME,
+            gen_ai_attr.GEN_AI_CONVERSATION_ID: message.thread_id,
             "agent.adapter.type": message.adapter_id,
         },
     )
