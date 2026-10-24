@@ -567,7 +567,7 @@ class TestAgentServiceSpans:
 
         _ = [msg async for msg in service.run(_inbound())]
 
-        run_spans = span_recorder.by_name("agent.run")
+        run_spans = span_recorder.by_name("invoke_agent coding-agent")
         assert len(run_spans) == 1
         assert run_spans[0].status.status_code == StatusCode.ERROR
         assert "RuntimeError" in (run_spans[0].status.description or "")
@@ -582,7 +582,7 @@ class TestAgentServiceSpans:
 
         _ = [msg async for msg in service.run(_inbound())]
 
-        run_spans = span_recorder.by_name("agent.run")
+        run_spans = span_recorder.by_name("invoke_agent coding-agent")
         assert run_spans[0].status.status_code != StatusCode.ERROR
 
     async def test_tool_payloads_omitted_by_default(
@@ -597,13 +597,34 @@ class TestAgentServiceSpans:
         )
         cb.on_tool_end("secret-output", run_id="r1")
 
-        spans = span_recorder.by_name("tool.bash")
+        spans = span_recorder.by_name("execute_tool bash")
         assert len(spans) == 1
         attrs = spans[0].attributes
-        assert attrs["tool.name"] == "bash"
-        assert "tool.input" not in attrs
-        assert "tool.output" not in attrs
-        assert "tool.args.cmd" not in attrs
+        assert attrs["gen_ai.tool.name"] == "bash"
+        assert "gen_ai.tool.call.arguments" not in attrs
+        assert "gen_ai.tool.call.result" not in attrs
+
+    async def test_tool_span_follows_genai_conventions(
+        self, span_recorder: _SpanRecorder
+    ) -> None:
+        from opentelemetry.trace import SpanKind
+
+        cb = ToolSpanCallback()
+        cb.on_tool_start(
+            {"name": "bash", "description": "Run a shell command"},
+            "ls",
+            run_id="r1",
+        )
+        cb.on_tool_end("ok", run_id="r1")
+
+        span = span_recorder.by_name("execute_tool bash")[0]
+        assert span.kind == SpanKind.INTERNAL
+        attrs = span.attributes
+        assert attrs["gen_ai.operation.name"] == "execute_tool"
+        assert attrs["gen_ai.tool.name"] == "bash"
+        assert attrs["gen_ai.tool.type"] == "function"
+        assert attrs["gen_ai.tool.description"] == "Run a shell command"
+        assert "langsmith.span.kind" not in attrs
 
     async def test_tool_payloads_bounded_when_captured(
         self, span_recorder: _SpanRecorder
@@ -617,15 +638,21 @@ class TestAgentServiceSpans:
         )
         cb.on_tool_end("z" * 100, run_id="r1")
 
-        spans = span_recorder.by_name("tool.bash")
-        attrs = spans[0].attributes
-        assert attrs["tool.input"] == "x" * 10 + "…"
-        assert attrs["tool.args.cmd"] == "y" * 10 + "…"
-        assert attrs["tool.output"] == "z" * 10 + "…"
+        attrs = span_recorder.by_name("execute_tool bash")[0].attributes
+        assert attrs["gen_ai.tool.call.arguments"] == "x" * 10 + "…"
+        assert attrs["gen_ai.tool.call.result"] == "z" * 10 + "…"
 
-    async def test_model_span_records_name_and_usage(
+    async def test_tool_error_records_error_type(
         self, span_recorder: _SpanRecorder
     ) -> None:
+        cb = ToolSpanCallback()
+        cb.on_tool_start({"name": "bash"}, "ls", run_id="r1")
+        cb.on_tool_error(TimeoutError("too slow"), run_id="r1")
+
+        attrs = span_recorder.by_name("execute_tool bash")[0].attributes
+        assert attrs["error.type"] == "TimeoutError"
+
+    async def test_model_span_records_usage(self, span_recorder: _SpanRecorder) -> None:
         from langchain_core.outputs import LLMResult
 
         cb = ModelSpanCallback()
@@ -641,12 +668,66 @@ class TestAgentServiceSpans:
         )
         cb.on_llm_end(response, run_id="m1")
 
-        spans = span_recorder.by_name("model.call")
+        spans = span_recorder.by_name("chat gpt-test")
         assert len(spans) == 1
         attrs = spans[0].attributes
-        assert attrs["model.name"] == "gpt-test"
-        assert attrs["model.usage.prompt_tokens"] == 5
-        assert attrs["model.usage.completion_tokens"] == 7
+        assert attrs["gen_ai.usage.input_tokens"] == 5
+        assert attrs["gen_ai.usage.output_tokens"] == 7
+
+    async def test_model_span_follows_genai_conventions(
+        self, span_recorder: _SpanRecorder
+    ) -> None:
+        from langchain_core.outputs import LLMResult
+        from opentelemetry.trace import SpanKind
+
+        cb = ModelSpanCallback()
+        cb.on_chat_model_start(
+            {"name": "ChatOpenAI", "id": ["langchain", "chat_models", "openai"]},
+            [[]],
+            run_id="m1",
+            invocation_params={"model": "gpt-test"},
+        )
+        response = LLMResult(
+            generations=[],
+            llm_output={
+                "token_usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 7,
+                    "total_tokens": 12,
+                }
+            },
+        )
+        cb.on_llm_end(response, run_id="m1")
+
+        span = span_recorder.by_name("chat gpt-test")[0]
+        assert span.kind == SpanKind.CLIENT
+        attrs = span.attributes
+        assert attrs["gen_ai.operation.name"] == "chat"
+        assert attrs["gen_ai.provider.name"] == "openai"
+        assert attrs["gen_ai.request.model"] == "gpt-test"
+        assert attrs["gen_ai.usage.input_tokens"] == 5
+        assert attrs["gen_ai.usage.output_tokens"] == 7
+        # No convention attribute exists for the aggregate token count.
+        assert "gen_ai.usage.total_tokens" not in attrs
+        assert "langsmith.span.kind" not in attrs
+
+    async def test_run_span_follows_genai_conventions(
+        self, span_recorder: _SpanRecorder
+    ) -> None:
+        from opentelemetry.trace import SpanKind
+
+        graph = _make_graph({"agent": {"messages": [AIMessage(content="Hi")]}})
+        service = AgentService(graph)
+
+        _ = [msg async for msg in service.run(_inbound())]
+
+        span = span_recorder.by_name("invoke_agent coding-agent")[0]
+        assert span.kind == SpanKind.INTERNAL
+        attrs = span.attributes
+        assert attrs["gen_ai.operation.name"] == "invoke_agent"
+        assert attrs["gen_ai.agent.name"] == "coding-agent"
+        assert attrs["gen_ai.conversation.id"] == "thread-1"
+        assert "langsmith.span.kind" not in attrs
 
     async def test_run_span_records_usage_metadata(
         self, span_recorder: _SpanRecorder
@@ -671,10 +752,9 @@ class TestAgentServiceSpans:
         ):
             _ = [msg async for msg in service.run(_inbound())]
 
-        run_spans = span_recorder.by_name("agent.run")
-        attrs = run_spans[0].attributes
-        assert attrs["model.usage.gpt-test.input_tokens"] == 3
-        assert attrs["model.usage.gpt-test.output_tokens"] == 4
+        attrs = span_recorder.by_name("invoke_agent coding-agent")[0].attributes
+        assert attrs["gen_ai.usage.input_tokens"] == 3
+        assert attrs["gen_ai.usage.output_tokens"] == 4
 
 
 # ---------------------------------------------------------------------------
