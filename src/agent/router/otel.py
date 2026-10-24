@@ -13,7 +13,7 @@ from agent.router.messages import InboundMessage
 logger = logging.getLogger(__name__)
 
 #: Agent name reported as ``gen_ai.agent.name`` and used in the root span name.
-_AGENT_NAME = "coding-agent"
+_AGENT_NAME = telemetry.SERVICE_NAME
 
 #: ``gen_ai.operation.name`` values from the OpenTelemetry GenAI conventions.
 _OP_CHAT = "chat"
@@ -278,7 +278,6 @@ def init_agent_span(message: InboundMessage):
             "gen_ai.operation.name": _OP_INVOKE_AGENT,
             "gen_ai.agent.name": _AGENT_NAME,
             "gen_ai.conversation.id": message.thread_id,
-            "thread_id": message.thread_id,
-            "adapter_id": message.adapter_id,
+            "agent.adapter.type": message.adapter_id,
         },
     )

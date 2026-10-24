@@ -218,7 +218,6 @@ def main() -> None:
     load_dotenv()
     configure_logging()
     configure_telemetry(
-        service_name="coding-agent",
         endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
     )
 

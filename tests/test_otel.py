@@ -634,8 +634,7 @@ class TestInitAgentSpan:
         assert attrs["gen_ai.operation.name"] == "invoke_agent"
         assert attrs["gen_ai.agent.name"] == "coding-agent"
         assert attrs["gen_ai.conversation.id"] == "t-42"
-        assert attrs["thread_id"] == "t-42"
-        assert attrs["adapter_id"] == "discord"
+        assert attrs["agent.adapter.type"] == "discord"
 
     def test_span_is_current_inside_context(self, span_recorder: _SpanRecorder) -> None:
         with init_agent_span(_inbound()) as span:

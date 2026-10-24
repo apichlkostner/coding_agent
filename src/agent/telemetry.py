@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 _configured = False
 
+#: Service and agent identity, used as ``service.name``,
+#: ``gen_ai.agent.name`` and the tracer scope name.
+SERVICE_NAME = "coding-agent"
+
 #: Path appended to a base OTLP endpoint to reach the traces signal.
 _TRACES_PATH = "/v1/traces"
 
@@ -39,7 +43,7 @@ def _normalize_endpoint(endpoint: str) -> str:
 
 def configure_telemetry(
     *,
-    service_name: str = "coding-agent",
+    service_name: str = SERVICE_NAME,
     endpoint: str | None = None,
 ) -> None:
     """Install the global tracer provider. Idempotent.
@@ -84,4 +88,4 @@ def configure_telemetry(
 
 def get_tracer() -> trace.Tracer:
     """Return the agent tracer."""
-    return trace.get_tracer("coding-agent")
+    return trace.get_tracer(SERVICE_NAME)
