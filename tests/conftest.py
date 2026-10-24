@@ -9,12 +9,18 @@ between tests.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+# Tests must not emit LangSmith spans: ``agent`` loads ``.env`` at import time
+# and the suite would otherwise start the exporter and hit the collector.
+# Set before any ``agent`` import so ``load_dotenv`` keeps this value.
+os.environ["LANGSMITH_TRACING"] = "false"
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "lsp_cpp"
 PYTHON_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "lsp_python"
