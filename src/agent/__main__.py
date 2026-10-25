@@ -34,6 +34,7 @@ from agent.config import Config, load_config
 from agent.logging_config import configure_logging
 from agent.router import AgentService, MessageRouter
 from agent.telemetry import configure_telemetry
+from agent.telemetry_metrics import configure_telemetry_metric
 
 if TYPE_CHECKING:
     pass
@@ -218,6 +219,9 @@ def main() -> None:
     load_dotenv()
     configure_logging()
     configure_telemetry(
+        endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
+    )
+    configure_telemetry_metric(
         endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
     )
 

@@ -61,6 +61,13 @@ Optional integrations still use environment variables: `TAVILY_API_KEY` enables 
 
 LangChain's own run tree is exported over the same OpenTelemetry pipeline. Set `LANGSMITH_TRACING=true` and `LANGSMITH_TRACING_MODE=otel` to emit LangSmith spans into the configured collector without a LangSmith account, endpoint, or API key. For native tracing, or to send to both LangSmith and the collector, use `LANGSMITH_TRACING_MODE=hybrid` with `LANGSMITH_ENDPOINT`, `LANGSMITH_API_KEY`, and `LANGSMITH_PROJECT`. The `langsmith` client reuses the global tracer provider installed by `configure_telemetry()`, so that call must happen before the first traced invocation (as it does in `main()`).
 
+Token usage is also exported as OpenTelemetry metrics. The base URL is extended with `/v1/metrics`; `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` can instead specify the full metrics URL and takes precedence over the base URL. Each model call records:
+
+- counters `gen_ai.client.inference.usage.input_tokens`, `.output_tokens`, and the subsets `.cache_read.input_tokens`, `.cache_write.input_tokens`, and `.reasoning.output_tokens`;
+- per-operation histograms `gen_ai.client.inference.operation.input_tokens` and `.output_tokens`, including failed calls (recorded as zero with `error.type`).
+
+Counters and histograms carry `gen_ai.operation.name`, `gen_ai.provider.name`, and `gen_ai.request.model`; counters additionally carry `gen_ai.token.modality` (`unknown` because providers do not break usage down by modality here). Cached and reasoning tokens are subsets and are never added to the input/output totals.
+
 Tool inputs and outputs are omitted from spans by default. Set `logging.capture_payloads: true` in `config/config.yaml` to include them, bounded by `logging.preview_size`. A non-positive `preview_size` disables truncation, so keep it positive when capturing payloads.
 
 ## Usage

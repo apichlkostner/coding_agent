@@ -17,7 +17,12 @@ from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import AIMessage, ToolMessage
 
 from agent import telemetry
-from agent.router.agent_service import AgentService, ModelSpanCallback, ToolSpanCallback
+from agent.router.agent_service import (
+    AgentService,
+    ModelSpanCallback,
+    TokenUsageMetricsCallback,
+    ToolSpanCallback,
+)
 from agent.router.base_adapter import BaseAdapter
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.router import MessageRouter
@@ -674,6 +679,24 @@ class TestAgentServiceSpans:
         assert attrs["gen_ai.usage.input_tokens"] == 5
         assert attrs["gen_ai.usage.output_tokens"] == 7
 
+    async def test_run_registers_token_metrics_callback(self) -> None:
+        captured: dict[str, Any] = {}
+
+        async def _astream(
+            *args: Any, **kwargs: Any
+        ) -> AsyncGenerator[dict[str, Any], None]:
+            captured.update(kwargs)
+            yield {"agent": {"messages": [AIMessage(content="Hi")]}}
+
+        graph = MagicMock()
+        graph.astream = _astream
+        service = AgentService(graph)
+
+        _ = [msg async for msg in service.run(_inbound())]
+
+        callbacks = captured["config"]["callbacks"]
+        assert any(isinstance(cb, TokenUsageMetricsCallback) for cb in callbacks)
+
     async def test_model_span_follows_genai_conventions(
         self, span_recorder: _SpanRecorder
     ) -> None:
@@ -755,6 +778,30 @@ class TestAgentServiceSpans:
         attrs = span_recorder.by_name("invoke_agent coding-agent")[0].attributes
         assert attrs["gen_ai.usage.input_tokens"] == 3
         assert attrs["gen_ai.usage.output_tokens"] == 4
+
+    async def test_response_succeeds_with_partial_usage_metadata(self) -> None:
+        graph = _make_graph({"agent": {"messages": [AIMessage(content="Hi")]}})
+
+        class _StubUsage(UsageMetadataCallbackHandler):
+            def __init__(self) -> None:
+                super().__init__()
+                self.usage_metadata = {
+                    "another-model": {
+                        "input_tokens": 3,
+                        "output_tokens": 4,
+                        "total_tokens": 7,
+                    }
+                }
+
+        service = AgentService(graph)
+        with patch(
+            "agent.router.agent_service.UsageMetadataCallbackHandler", _StubUsage
+        ):
+            results = [msg async for msg in service.run(_inbound())]
+
+        assert len(results) == 1
+        assert results[0].msg_type == "response"
+        assert results[0].content == "Hi"
 
 
 # ---------------------------------------------------------------------------

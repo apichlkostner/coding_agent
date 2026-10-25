@@ -18,5 +18,16 @@ load_dotenv()
 
 from agent.graph import build_graph, graph  # noqa: E402
 from agent.telemetry import configure_telemetry, get_tracer  # noqa: E402
+from agent.telemetry_metrics import (  # noqa: E402
+    configure_telemetry_metric,
+    get_metrics,
+)
 
-__all__ = ["build_graph", "graph", "configure_telemetry", "get_tracer"]
+__all__ = [
+    "build_graph",
+    "graph",
+    "configure_telemetry",
+    "get_tracer",
+    "configure_telemetry_metric",
+    "get_metrics",
+]

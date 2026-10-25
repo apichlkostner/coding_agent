@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
+from langchain_core.messages import AIMessage
 from langchain_core.outputs import LLMResult
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -21,6 +23,7 @@ from agent.router import otel
 from agent.router.messages import InboundMessage
 from agent.router.otel import (
     ModelSpanCallback,
+    TokenUsageMetricsCallback,
     ToolSpanCallback,
     init_agent_span,
     record_run_usage,
@@ -541,6 +544,185 @@ class TestModelSpanCallback:
         span = span_recorder.one("chat")
         assert span.parent is not None
         assert span.parent.span_id == parent.get_span_context().span_id
+
+    def test_usage_from_message_metadata(self, span_recorder: _SpanRecorder) -> None:
+        """Spans use the same normalized usage as the metrics path."""
+        from langchain_core.outputs import ChatGeneration
+
+        message = AIMessage(
+            content="answer",
+            usage_metadata={
+                "input_tokens": 5,
+                "output_tokens": 7,
+                "total_tokens": 12,
+                "input_token_details": {"cache_read": 2},
+                "output_token_details": {"reasoning": 3},
+            },
+        )
+        response = LLMResult(
+            generations=[[ChatGeneration(message=message)]],
+            llm_output=None,
+        )
+        cb = ModelSpanCallback()
+        cb.on_chat_model_start({"name": "ChatOpenAI"}, [[]], run_id="m1")
+        cb.on_llm_end(response, run_id="m1")
+
+        attrs = _attrs(span_recorder.one("chat"))
+        assert attrs["gen_ai.usage.input_tokens"] == 5
+        assert attrs["gen_ai.usage.output_tokens"] == 7
+        assert attrs["gen_ai.usage.cache_read.input_tokens"] == 2
+        assert attrs["gen_ai.usage.reasoning.output_tokens"] == 3
+
+
+# ---------------------------------------------------------------------------
+# TokenUsageMetricsCallback
+# ---------------------------------------------------------------------------
+
+
+class TestTokenUsageMetricsCallback:
+    def test_chat_model_records_normalized_usage(self) -> None:
+        from langchain_core.outputs import ChatGeneration
+
+        message = AIMessage(
+            content="answer",
+            usage_metadata={
+                "input_tokens": 5,
+                "output_tokens": 7,
+                "total_tokens": 12,
+                "input_token_details": {"cache_read": 2},
+            },
+        )
+        response = LLMResult(
+            generations=[[ChatGeneration(message=message)]],
+            llm_output=None,
+        )
+        cb = TokenUsageMetricsCallback()
+        cb.on_chat_model_start(
+            {"name": "ChatOpenAI"},
+            [[]],
+            run_id="metric-model-call",
+            invocation_params={"model": "gpt-test"},
+        )
+
+        with patch("agent.router.otel.record_token_usage_metrics") as record_usage:
+            cb.on_llm_end(response, run_id="metric-model-call")
+
+        record_usage.assert_called_once_with(
+            message.usage_metadata,
+            {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.provider.name": "openai",
+                "gen_ai.request.model": "gpt-test",
+            },
+        )
+
+    def test_plain_llm_records_text_completion_operation(self) -> None:
+        cb = TokenUsageMetricsCallback()
+        cb.on_llm_start(
+            {"name": "ChatOpenAI"},
+            ["prompt"],
+            run_id="llm-call",
+            invocation_params={"model": "gpt-test"},
+        )
+
+        with patch("agent.router.otel.record_token_usage_metrics") as record_usage:
+            cb.on_llm_end(
+                _llm_result(
+                    {"token_usage": {"prompt_tokens": 5, "completion_tokens": 7}}
+                ),
+                run_id="llm-call",
+            )
+
+        record_usage.assert_called_once_with(
+            {"input_tokens": 5, "output_tokens": 7},
+            {
+                "gen_ai.operation.name": "text_completion",
+                "gen_ai.provider.name": "openai",
+                "gen_ai.request.model": "gpt-test",
+            },
+        )
+
+    def test_provider_payload_is_normalized(self) -> None:
+        cb = TokenUsageMetricsCallback()
+        cb.on_chat_model_start(
+            {"name": "ChatAnthropic"},
+            [[]],
+            run_id="provider-call",
+            invocation_params={"model": "claude-test"},
+        )
+
+        with patch("agent.router.otel.record_token_usage_metrics") as record_usage:
+            cb.on_llm_end(
+                _llm_result(
+                    {
+                        "token_usage": {
+                            "prompt_tokens": 5,
+                            "completion_tokens": 7,
+                            "prompt_tokens_details": {"cached_tokens": 2},
+                            "completion_tokens_details": {"reasoning_tokens": 3},
+                            "cache_creation_input_tokens": 4,
+                        }
+                    }
+                ),
+                run_id="provider-call",
+            )
+
+        record_usage.assert_called_once_with(
+            {
+                "input_tokens": 5,
+                "output_tokens": 7,
+                "input_token_details": {"cache_read": 2, "cache_creation": 4},
+                "output_token_details": {"reasoning": 3},
+            },
+            {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.provider.name": "anthropic",
+                "gen_ai.request.model": "claude-test",
+            },
+        )
+
+    def test_error_records_zero_usage_metric(self) -> None:
+        cb = TokenUsageMetricsCallback()
+        cb.on_chat_model_start(
+            {"name": "ChatOpenAI"},
+            [[]],
+            run_id="failed-model-call",
+            invocation_params={"model": "gpt-test"},
+        )
+
+        with patch("agent.router.otel.record_token_usage_metrics") as record_usage:
+            cb.on_llm_error(TimeoutError("timeout"), run_id="failed-model-call")
+
+        record_usage.assert_called_once_with(
+            None,
+            {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.provider.name": "openai",
+                "gen_ai.request.model": "gpt-test",
+            },
+            error_type="TimeoutError",
+        )
+
+    def test_end_without_start_is_noop(self) -> None:
+        cb = TokenUsageMetricsCallback()
+
+        with patch("agent.router.otel.record_token_usage_metrics") as record_usage:
+            cb.on_llm_end(_llm_result(None), run_id="missing")
+            cb.on_llm_error(RuntimeError("boom"), run_id="missing")
+
+        record_usage.assert_not_called()
+
+    def test_metric_failure_is_swallowed(self) -> None:
+        cb = TokenUsageMetricsCallback()
+        cb.on_chat_model_start({"name": "ChatOpenAI"}, [[]], run_id="m1")
+        cb.on_chat_model_start({"name": "ChatOpenAI"}, [[]], run_id="m2")
+
+        with patch(
+            "agent.router.otel.record_token_usage_metrics",
+            side_effect=RuntimeError("collector down"),
+        ):
+            cb.on_llm_end(_llm_result(None), run_id="m1")
+            cb.on_llm_error(RuntimeError("boom"), run_id="m2")
 
 
 # ---------------------------------------------------------------------------

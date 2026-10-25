@@ -20,6 +20,7 @@ from opentelemetry.trace import Status, StatusCode
 from agent.router.messages import InboundMessage, OutboundMessage
 from agent.router.otel import (
     ModelSpanCallback,
+    TokenUsageMetricsCallback,
     ToolSpanCallback,
     init_agent_span,
     record_run_usage,
@@ -97,10 +98,16 @@ class AgentService:
             capture_payloads=self._capture_payloads,
         )
         model_span_cb = ModelSpanCallback()
+        token_metrics_cb = TokenUsageMetricsCallback()
 
         config: RunnableConfig = {
             "configurable": {"thread_id": message.thread_id},
-            "callbacks": [usage_metadata_cb, tool_span_cb, model_span_cb],
+            "callbacks": [
+                usage_metadata_cb,
+                tool_span_cb,
+                model_span_cb,
+                token_metrics_cb,
+            ],
         }
 
         start_time = time.perf_counter()
