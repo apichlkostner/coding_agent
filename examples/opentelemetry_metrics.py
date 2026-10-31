@@ -1,14 +1,23 @@
+import os
 from dataclasses import dataclass
+import random
 from time import sleep
 
+from dotenv import load_dotenv
 from opentelemetry import metrics
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
-metric_reader = PeriodicExportingMetricReader(
-    OTLPMetricExporter(endpoint="http://host.docker.internal:4318/v1/metrics")
+load_dotenv("../.env")
+load_dotenv()
+
+ENDPOINT = (
+    os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost") + "/v1/metrics"
 )
+ITERATIONS = 100
+
+metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=ENDPOINT))
 provider = MeterProvider(metric_readers=[metric_reader])
 
 # Sets the global default meter provider
@@ -30,18 +39,19 @@ class WorkItem:
 
 def do_work(work_item: WorkItem):
     # count the work being doing
-    work_counter.add(1, {"work.type": work_item.work_type})
+    increment = random.randrange(1, 100)
+    work_counter.add(increment, {"work.type": work_item.work_type})
     print("doing some work...")
+    sleep(0.1)
 
 
 def main():
-    for i in range(10000):
+    for i in range(ITERATIONS):
         work_item = WorkItem(work_type="doing", data=i)
         do_work(work_item=work_item)
-        sleep(0.1)
 
+    # Flushes pending data and stops the reader.
     provider.shutdown()
-    sleep(2)
 
 
 if __name__ == "__main__":
