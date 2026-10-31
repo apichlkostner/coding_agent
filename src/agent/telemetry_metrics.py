@@ -1,5 +1,4 @@
 import atexit
-import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -9,7 +8,7 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 
-from agent.telemetry import SERVICE_NAME
+from agent.telemetry import SERVICE_NAME, resolve_otlp_endpoint
 
 #: Path appended to a base OTLP endpoint to reach the metrics signal.
 _METRICS_PATH = "/v1/metrics"
@@ -20,8 +19,8 @@ _METRICS_ENDPOINT_ENV = "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"
 _configured = False
 
 
-def get_metrics() -> metrics.Meter:
-    """Return the agent metrics."""
+def get_meter() -> metrics.Meter:
+    """Return the agent meter."""
     return metrics.get_meter(SERVICE_NAME)
 
 
@@ -45,7 +44,7 @@ _TOKEN_BUCKET_BOUNDARIES: tuple[float, ...] = (
     67108864,
 )
 
-_meter = get_metrics()
+_meter = get_meter()
 
 _input_token_counter = _meter.create_counter(
     "gen_ai.client.inference.usage.input_tokens",
@@ -98,47 +97,31 @@ _output_token_histogram = _create_token_histogram(
 )
 
 
-def _normalize_endpoint(endpoint: str) -> str:
-    """Return the full metrics URL for *endpoint*.
-
-    ``OTEL_EXPORTER_OTLP_ENDPOINT`` is a *base* URL (e.g.
-    ``http://collector:4318``), while :class:`OTLPMetricExporter` expects the
-    full metrics URL (``http://collector:4318/v1/metrics``). A value that
-    already points at the metrics signal is returned unchanged.
-    """
-    stripped = endpoint.rstrip("/")
-    if stripped.endswith(_METRICS_PATH):
-        return stripped
-    return stripped + _METRICS_PATH
-
-
-def configure_telemetry_metric(
+def configure_metrics(
     *,
     service_name: str = SERVICE_NAME,
     endpoint: str | None = None,
 ) -> None:
-    """Install the global meter provider. Idempotent."""
+    """Install the global meter provider. Idempotent.
+
+    Endpoint resolution matches :func:`agent.telemetry.configure_telemetry`:
+    ``OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`` wins, then *endpoint*, then the
+    exporter's own ``OTEL_EXPORTER_OTLP_*`` lookup.
+    """
     global _configured
     if _configured:
         return
     _configured = True
 
     provider = MeterProvider(resource=Resource.create({"service.name": service_name}))
+    resolved = resolve_otlp_endpoint(
+        endpoint, signal_path=_METRICS_PATH, override_env=_METRICS_ENDPOINT_ENV
+    )
+    exporter = (
+        OTLPMetricExporter(endpoint=resolved) if resolved else OTLPMetricExporter()
+    )
+    provider.add_metric_reader(PeriodicExportingMetricReader(exporter))
 
-    metrics_endpoint = os.environ.get(_METRICS_ENDPOINT_ENV)
-    if metrics_endpoint:
-        # The metrics-specific override wins and is already a full signal URL.
-        provider.add_metric_reader(
-            PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=metrics_endpoint))
-        )
-    elif endpoint:
-        provider.add_metric_reader(
-            PeriodicExportingMetricReader(
-                OTLPMetricExporter(endpoint=_normalize_endpoint(endpoint))
-            )
-        )
-
-    # Sets the global default meter provider
     metrics.set_meter_provider(provider)
     atexit.register(provider.shutdown)  # flush buffered metrics on exit
 
@@ -160,50 +143,44 @@ def record_token_usage_metrics(
     """Record GenAI token consumption and per-inference distributions.
 
     Cached and reasoning tokens are reported as subsets of the input and
-    output usage; they are never added to the totals a second time. Missing
-    counts are recorded as zero in the per-operation histograms, while
-    cumulative usage counters only record known positive token counts.
-    ``error.type`` is only added to the histograms, as the conventions define
-    it there and a failed operation has no token count to add to a counter.
+    output usage; they are never added to the totals a second time.
+    A failed operation records zero in the per-operation histograms with
+    ``error.type``. A successful operation with unknown usage records nothing,
+    so it does not skew the percentiles. Counters only add known positive counts.
     """
     usage = usage or {}
     histogram_attributes = dict(attributes)
     if error_type is not None:
         histogram_attributes["error.type"] = error_type
-    # Counters only carry attributes defined for them; ``error.type`` belongs
-    # to the per-operation histograms, and failed calls add no token counts.
-    usage_attributes = {
-        **dict(attributes),
-        "gen_ai.token.modality": "unknown",
-    }
 
     for key, counter, histogram in (
         ("input_tokens", _input_token_counter, _input_token_histogram),
         ("output_tokens", _output_token_counter, _output_token_histogram),
     ):
         token_count = usage.get(key)
-        count = token_count if type(token_count) is int and token_count >= 0 else 0
+        if type(token_count) is int and token_count >= 0:
+            count = token_count
+        elif error_type is not None:
+            count = 0
+        else:
+            continue
         histogram.record(count, histogram_attributes)
         if count > 0:
-            counter.add(count, usage_attributes)
+            counter.add(count, attributes)
 
     input_details = usage.get("input_token_details")
     if isinstance(input_details, Mapping):
         _add_token_counter(
-            _cached_input_token_counter,
-            input_details.get("cache_read"),
-            usage_attributes,
+            _cached_input_token_counter, input_details.get("cache_read"), attributes
         )
         _add_token_counter(
             _cache_write_input_token_counter,
             input_details.get("cache_creation"),
-            usage_attributes,
+            attributes,
         )
 
     output_details = usage.get("output_token_details")
     if isinstance(output_details, Mapping):
         _add_token_counter(
-            _reasoning_output_token_counter,
-            output_details.get("reasoning"),
-            usage_attributes,
+            _reasoning_output_token_counter, output_details.get("reasoning"), attributes
         )

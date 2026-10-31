@@ -238,7 +238,7 @@ class TokenUsageMetricsCallback(BaseCallbackHandler):
             return
         try:
             record_token_usage_metrics(_usage_metadata(response), attributes)
-        except Exception:  # noqa: BLE001 - telemetry is best-effort
+        except Exception:
             logger.debug("Failed to record token usage metrics", exc_info=True)
 
     def on_llm_error(self, error: BaseException, *, run_id: Any, **kwargs: Any) -> None:
@@ -249,7 +249,7 @@ class TokenUsageMetricsCallback(BaseCallbackHandler):
             record_token_usage_metrics(
                 None, attributes, error_type=type(error).__name__
             )
-        except Exception:  # noqa: BLE001 - telemetry is best-effort
+        except Exception:
             logger.debug("Failed to record token usage metrics", exc_info=True)
 
 
@@ -358,6 +358,12 @@ def _record_usage(span: Span, response: Any) -> None:
         if type(cached_tokens) is int:
             span.set_attribute(
                 gen_ai_attr.GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS, cached_tokens
+            )
+        cache_write_tokens = input_details.get("cache_creation")
+        if type(cache_write_tokens) is int:
+            span.set_attribute(
+                gen_ai_attr.GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS,
+                cache_write_tokens,
             )
     output_details = usage.get("output_token_details")
     if isinstance(output_details, Mapping):

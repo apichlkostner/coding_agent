@@ -573,6 +573,29 @@ class TestModelSpanCallback:
         assert attrs["gen_ai.usage.cache_read.input_tokens"] == 2
         assert attrs["gen_ai.usage.reasoning.output_tokens"] == 3
 
+    def test_cache_write_usage_is_on_span(self, span_recorder: _SpanRecorder) -> None:
+        from langchain_core.outputs import ChatGeneration
+
+        message = AIMessage(
+            content="answer",
+            usage_metadata={
+                "input_tokens": 5,
+                "output_tokens": 7,
+                "total_tokens": 12,
+                "input_token_details": {"cache_creation": 4},
+            },
+        )
+        response = LLMResult(
+            generations=[[ChatGeneration(message=message)]],
+            llm_output=None,
+        )
+        cb = ModelSpanCallback()
+        cb.on_chat_model_start({"name": "ChatOpenAI"}, [[]], run_id="m2")
+        cb.on_llm_end(response, run_id="m2")
+
+        attrs = _attrs(span_recorder.one("chat"))
+        assert attrs["gen_ai.usage.cache_creation.input_tokens"] == 4
+
 
 # ---------------------------------------------------------------------------
 # TokenUsageMetricsCallback

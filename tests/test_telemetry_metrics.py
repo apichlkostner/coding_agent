@@ -10,21 +10,7 @@ import pytest
 from agent import telemetry_metrics
 
 
-class TestNormalizeEndpoint:
-    def test_base_url_gets_metrics_path(self) -> None:
-        assert (
-            telemetry_metrics._normalize_endpoint("http://collector:4318")
-            == "http://collector:4318/v1/metrics"
-        )
-
-    def test_metrics_url_with_trailing_slash_is_normalized(self) -> None:
-        assert (
-            telemetry_metrics._normalize_endpoint("http://collector:4318/v1/metrics/")
-            == "http://collector:4318/v1/metrics"
-        )
-
-
-class TestConfigureTelemetryMetric:
+class TestConfigureMetrics:
     @pytest.fixture(autouse=True)
     def _reset_configured(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         telemetry_metrics._configured = False
@@ -47,9 +33,7 @@ class TestConfigureTelemetryMetric:
             patch.object(telemetry_metrics.metrics, "set_meter_provider"),
             patch.object(telemetry_metrics.atexit, "register"),
         ):
-            telemetry_metrics.configure_telemetry_metric(
-                endpoint="http://collector:4318"
-            )
+            telemetry_metrics.configure_metrics(endpoint="http://collector:4318")
 
         exporter.assert_called_once_with(endpoint="http://metrics:4318/v1/metrics")
 
@@ -61,11 +45,33 @@ class TestConfigureTelemetryMetric:
             patch.object(telemetry_metrics.metrics, "set_meter_provider"),
             patch.object(telemetry_metrics.atexit, "register"),
         ):
-            telemetry_metrics.configure_telemetry_metric(
-                endpoint="http://collector:4318"
-            )
+            telemetry_metrics.configure_metrics(endpoint="http://collector:4318")
 
         exporter.assert_called_once_with(endpoint="http://collector:4318/v1/metrics")
+
+    def test_base_endpoint_with_trailing_slash_is_normalized(self) -> None:
+        provider = MagicMock()
+        with (
+            patch.object(telemetry_metrics, "MeterProvider", return_value=provider),
+            patch.object(telemetry_metrics, "OTLPMetricExporter") as exporter,
+            patch.object(telemetry_metrics.metrics, "set_meter_provider"),
+            patch.object(telemetry_metrics.atexit, "register"),
+        ):
+            telemetry_metrics.configure_metrics(endpoint="http://collector:4318/")
+
+        exporter.assert_called_once_with(endpoint="http://collector:4318/v1/metrics")
+
+    def test_no_endpoint_lets_exporter_resolve_env(self) -> None:
+        provider = MagicMock()
+        with (
+            patch.object(telemetry_metrics, "MeterProvider", return_value=provider),
+            patch.object(telemetry_metrics, "OTLPMetricExporter") as exporter,
+            patch.object(telemetry_metrics.metrics, "set_meter_provider"),
+            patch.object(telemetry_metrics.atexit, "register"),
+        ):
+            telemetry_metrics.configure_metrics()
+
+        exporter.assert_called_once_with()
 
     def test_provider_has_service_name_resource(self) -> None:
         provider = MagicMock()
@@ -76,7 +82,7 @@ class TestConfigureTelemetryMetric:
             patch.object(telemetry_metrics.metrics, "set_meter_provider"),
             patch.object(telemetry_metrics.atexit, "register"),
         ):
-            telemetry_metrics.configure_telemetry_metric(service_name="test-agent")
+            telemetry_metrics.configure_metrics(service_name="test-agent")
 
         resource = factory.call_args.kwargs["resource"]
         assert resource.attributes["service.name"] == "test-agent"
@@ -118,12 +124,11 @@ class TestRecordTokenUsageMetrics:
                 attributes,
             )
 
-        usage_attributes = {**attributes, "gen_ai.token.modality": "unknown"}
-        input_add.assert_called_once_with(5, usage_attributes)
-        output_add.assert_called_once_with(7, usage_attributes)
-        cached_add.assert_called_once_with(2, usage_attributes)
-        cache_write_add.assert_called_once_with(3, usage_attributes)
-        reasoning_add.assert_called_once_with(4, usage_attributes)
+        input_add.assert_called_once_with(5, attributes)
+        output_add.assert_called_once_with(7, attributes)
+        cached_add.assert_called_once_with(2, attributes)
+        cache_write_add.assert_called_once_with(3, attributes)
+        reasoning_add.assert_called_once_with(4, attributes)
         input_record.assert_called_once_with(5, attributes)
         output_record.assert_called_once_with(7, attributes)
 
@@ -148,10 +153,8 @@ class TestRecordTokenUsageMetrics:
         input_add.assert_not_called()
         cached_add.assert_not_called()
 
-    def test_missing_usage_records_zero_histograms_only(self) -> None:
-        attributes = {
-            "gen_ai.operation.name": "chat",
-        }
+    def test_successful_call_with_unknown_usage_records_nothing(self) -> None:
+        attributes = {"gen_ai.operation.name": "chat"}
         with (
             patch.object(telemetry_metrics._input_token_counter, "add") as input_add,
             patch.object(telemetry_metrics._output_token_counter, "add") as output_add,
@@ -166,8 +169,26 @@ class TestRecordTokenUsageMetrics:
 
         input_add.assert_not_called()
         output_add.assert_not_called()
-        input_record.assert_called_once_with(0, attributes)
-        output_record.assert_called_once_with(0, attributes)
+        input_record.assert_not_called()
+        output_record.assert_not_called()
+
+    def test_failed_call_records_zero_histograms_with_error_type(self) -> None:
+        attributes = {"gen_ai.operation.name": "chat"}
+        with (
+            patch.object(
+                telemetry_metrics._input_token_histogram, "record"
+            ) as input_record,
+            patch.object(
+                telemetry_metrics._output_token_histogram, "record"
+            ) as output_record,
+        ):
+            telemetry_metrics.record_token_usage_metrics(
+                None, attributes, error_type="TimeoutError"
+            )
+
+        error_attributes = {**attributes, "error.type": "TimeoutError"}
+        input_record.assert_called_once_with(0, error_attributes)
+        output_record.assert_called_once_with(0, error_attributes)
 
     def test_error_type_is_added_to_failed_operation_metrics(self) -> None:
         with patch.object(telemetry_metrics._input_token_histogram, "record") as record:

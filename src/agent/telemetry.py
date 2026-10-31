@@ -27,18 +27,27 @@ _TRACES_PATH = "/v1/traces"
 _TRACES_ENDPOINT_ENV = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
 
 
-def _normalize_endpoint(endpoint: str) -> str:
-    """Return the full traces URL for *endpoint*.
+def resolve_otlp_endpoint(
+    endpoint: str | None,
+    *,
+    signal_path: str,
+    override_env: str,
+) -> str | None:
+    """Return the full URL of one OTLP signal, or ``None`` to defer to the exporter.
 
-    ``OTEL_EXPORTER_OTLP_ENDPOINT`` is a *base* URL (e.g.
-    ``http://collector:4318``), while :class:`OTLPSpanExporter` expects the
-    full traces URL (``http://collector:4318/v1/traces``).  A value that
-    already points at the traces signal is returned unchanged.
+    *override_env* is a signal-specific full URL and wins over *endpoint*.
+    *endpoint* is a base URL (``http://collector:4318``) and gets *signal_path*
+    appended unless it already ends with it.
     """
+    override = os.environ.get(override_env)
+    if override:
+        return override
+    if not endpoint:
+        return None
     stripped = endpoint.rstrip("/")
-    if stripped.endswith(_TRACES_PATH):
+    if stripped.endswith(signal_path):
         return stripped
-    return stripped + _TRACES_PATH
+    return stripped + signal_path
 
 
 def configure_telemetry(
@@ -68,20 +77,12 @@ def configure_telemetry(
     _configured = True
 
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
-    traces_endpoint = os.environ.get(_TRACES_ENDPOINT_ENV)
-    if traces_endpoint:
-        # Traces-specific override wins; it is already a full traces URL.
-        provider.add_span_processor(
-            BatchSpanProcessor(OTLPSpanExporter(endpoint=traces_endpoint))
-        )
-    elif endpoint:
-        provider.add_span_processor(
-            BatchSpanProcessor(OTLPSpanExporter(endpoint=_normalize_endpoint(endpoint)))
-        )
-    else:
-        # No explicit endpoint: let the exporter read the standard
-        # OTEL_EXPORTER_OTLP_ENDPOINT environment variable.
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    resolved = resolve_otlp_endpoint(
+        endpoint, signal_path=_TRACES_PATH, override_env=_TRACES_ENDPOINT_ENV
+    )
+    # Without a URL the exporter reads OTEL_EXPORTER_OTLP_* itself.
+    exporter = OTLPSpanExporter(endpoint=resolved) if resolved else OTLPSpanExporter()
+    provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
     atexit.register(provider.shutdown)  # flush buffered spans on exit
 
